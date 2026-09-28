@@ -9,6 +9,7 @@ from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
+    QButtonGroup,
     QLabel,
     QLineEdit,
     QMainWindow,
@@ -24,7 +25,7 @@ from application import gettext as _
 from application.component_view import ComponentView
 from application.grid_view import GridView
 from application.magic_line_settings import MagicLineSettingsDialog
-from application.preferences import PreferencesDialog
+from application.preferences import Preferences, PreferencesDialog
 from application.symbol import Line
 
 _qt_app = None
@@ -148,11 +149,15 @@ class MainWindow(QMainWindow):
         central = QWidget(self)
         layout = QVBoxLayout(central)
         layout.setContentsMargins(4, 4, 4, 4)
+        self.tool_group = QButtonGroup(self)
+        self.tool_group.setExclusive(True)
+        self.tool_buttons = {}
 
         char_row = QHBoxLayout()
         for char in ('+', 'o', '#', '/', '\\', '|', '-', '(', ')', "'", '.'):
             button = QPushButton(char, central)
             button.setFixedWidth(32)
+            self._register_tool_button(button, 'character:' + char)
             button.clicked.connect(lambda _checked=False, value=char: pub.sendMessage('CHARACTER_CHANGED', char=value))
             char_row.addWidget(button)
         space_button = QPushButton(_("Space"), central)
@@ -168,9 +173,11 @@ class MainWindow(QMainWindow):
         self.text_entry.setMaximumWidth(240)
         char_row.addWidget(self.text_entry)
         add_text_button = QPushButton(_("Insert text"), central)
+        self._register_tool_button(add_text_button, 'insert_text')
         add_text_button.clicked.connect(lambda: pub.sendMessage('ADD_TEXT'))
         char_row.addWidget(add_text_button)
         add_textblock_button = QPushButton(_("Insert text line"), central)
+        self._register_tool_button(add_textblock_button, 'insert_text_line')
         add_textblock_button.clicked.connect(
             lambda: pub.sendMessage('ADD_TEXTBLOCK', text=self.text_entry.text())
         )
@@ -180,25 +187,26 @@ class MainWindow(QMainWindow):
 
         body = QHBoxLayout()
         tools = QVBoxLayout()
-        self._add_tool_button(tools, _("Select object"), lambda: pub.sendMessage('SELECT_OBJECT'))
-        self._add_tool_button(tools, _("Select rectangle"), lambda: pub.sendMessage('SELECT_RECT'))
-        self._add_tool_button(tools, _("Eraser"), lambda: pub.sendMessage('SELECTING_ERASER'))
+        self._add_tool_button(tools, _("Select object"), lambda: pub.sendMessage('SELECT_OBJECT'), 'select_object')
+        self._add_tool_button(tools, _("Select rectangle"), lambda: pub.sendMessage('SELECT_RECT'), 'select_rect')
+        self._add_tool_button(tools, _("Eraser"), lambda: pub.sendMessage('SELECTING_ERASER'), 'eraser')
         tools.addWidget(self._separator())
         self._add_tool_button(tools, _("Rotate"), lambda: pub.sendMessage('ROTATE_SYMBOL'))
         self._add_tool_button(tools, _("Mirror"), lambda: pub.sendMessage('MIRROR_SYMBOL'))
         tools.addWidget(self._separator())
         for index, title in enumerate((_("Free line"), _("Line"), _("Line with o terminals"), _("Line with + terminals"), _("Line with terminals")), 0):
             button = QPushButton(title, central)
+            self._register_tool_button(button, 'free_line' if index == 0 else 'line_{}'.format(index))
             button.clicked.connect(lambda _checked=False, nr=index: self.on_line(nr))
             tools.addWidget(button)
-        self._add_tool_button(tools, _("Automatic line"), lambda: pub.sendMessage('DRAW_MAG_LINE'))
-        self._add_tool_button(tools, _("Rectangle"), lambda: pub.sendMessage('DRAW_RECT'))
-        self._add_tool_button(tools, _("Arrow"), lambda: pub.sendMessage('DRAW_ARROW'))
+        self._add_tool_button(tools, _("Automatic line"), lambda: pub.sendMessage('DRAW_MAG_LINE'), 'auto_line')
+        self._add_tool_button(tools, _("Rectangle"), lambda: pub.sendMessage('DRAW_RECT'), 'draw_rect')
+        self._add_tool_button(tools, _("Arrow"), lambda: pub.sendMessage('DRAW_ARROW'), 'arrow')
         tools.addWidget(self._separator())
-        self._add_tool_button(tools, _("Insert row"), lambda: self._selecting_row('insert_row'))
-        self._add_tool_button(tools, _("Insert column"), lambda: self._selecting_col('insert_col'))
-        self._add_tool_button(tools, _("Remove row"), lambda: self._selecting_row('remove_row'))
-        self._add_tool_button(tools, _("Remove column"), lambda: self._selecting_col('remove_col'))
+        self._add_tool_button(tools, _("Insert row"), lambda: self._selecting_row('insert_row'), 'insert_row')
+        self._add_tool_button(tools, _("Insert column"), lambda: self._selecting_col('insert_col'), 'insert_col')
+        self._add_tool_button(tools, _("Remove row"), lambda: self._selecting_row('remove_row'), 'remove_row')
+        self._add_tool_button(tools, _("Remove column"), lambda: self._selecting_col('remove_col'), 'remove_col')
         self._add_tool_button(tools, _("Edit draw commands"), lambda: pub.sendMessage('EDIT_MEMO'))
         tools.addStretch(1)
         body.addLayout(tools)
@@ -243,9 +251,21 @@ class MainWindow(QMainWindow):
         line.setStyleSheet('background-color: palette(mid);')
         return line
 
-    @staticmethod
-    def _add_tool_button(layout, text, callback):
+    def _register_tool_button(self, button, tool):
+        button.setCheckable(True)
+        button.setObjectName('tool_' + tool.replace(':', '_').replace('\\', 'backslash').replace("'", 'quote'))
+        button.setStyleSheet(
+            'QPushButton:checked { background-color: #b9d9f5; '
+            'border: 2px solid #2864a0; font-weight: bold; }'
+        )
+        self.tool_group.addButton(button)
+        self.tool_buttons[tool] = button
+        return button
+
+    def _add_tool_button(self, layout, text, callback, tool=None):
         button = QPushButton(text)
+        if tool is not None:
+            self._register_tool_button(button, tool)
         button.clicked.connect(callback)
         layout.addWidget(button)
         return button
@@ -257,6 +277,9 @@ class MainWindow(QMainWindow):
         pub.subscribe(self.on_file_opened, 'FILE_OPENED')
         pub.subscribe(self.on_new_file, 'NEW_FILE')
         pub.subscribe(self.on_nothing_selected, 'NOTHING_SELECTED')
+        pub.subscribe(self.on_component_changed, 'COMPONENT_CHANGED')
+        pub.subscribe(self.on_character_changed, 'CHARACTER_CHANGED')
+        pub.subscribe(self.on_active_tool_changed, 'ACTIVE_TOOL_CHANGED')
         pub.subscribe(self.on_symbol_selected, 'SYMBOL_SELECTED')
         pub.subscribe(self.on_selection_changed, 'SELECTION_CHANGED')
         pub.subscribe(self.on_undo_changed, 'UNDO_CHANGED')
@@ -288,6 +311,25 @@ class MainWindow(QMainWindow):
             4: Line.LINE4,
         }.get(index, Line.LINE1)
         pub.sendMessage(f'DRAW_LINE{index}', type=line_type)
+
+    def _clear_tool_highlight(self):
+        self.tool_group.setExclusive(False)
+        for button in self.tool_buttons.values():
+            button.setChecked(False)
+        self.tool_group.setExclusive(True)
+
+    def on_active_tool_changed(self, tool):
+        button = self.tool_buttons.get(tool)
+        if button is None:
+            self._clear_tool_highlight()
+        elif not button.isChecked():
+            button.setChecked(True)
+
+    def on_component_changed(self, label):
+        self._clear_tool_highlight()
+
+    def on_character_changed(self, char):
+        self.on_active_tool_changed('character:' + char)
 
     def on_pointer_moved(self, pos):
         self.label_xpos.setText(str(pos.x))
@@ -340,9 +382,13 @@ class MainWindow(QMainWindow):
         )
 
     def show_preferences(self):
+        previous_symbol_set = Preferences.values['SYMBOL_SET']
         dialog = PreferencesDialog(self)
         if dialog.exec():
             self.grid_view.set_grid_size()
+            symbol_set = Preferences.values['SYMBOL_SET']
+            if symbol_set != previous_symbol_set:
+                pub.sendMessage('SYMBOL_SET_CHANGED', symbol_set=symbol_set)
 
     def show_magic_line_settings(self):
         MagicLineSettingsDialog(self).exec()

@@ -11,7 +11,7 @@ class LinesTest(unittest.TestCase):
 
     def test_lines(self):
 
-        c = Controller(component_language='en')
+        c = Controller(component_language='en', symbol_set='iec')
         c.on_new()
 
         start = Pos(5, 5)
@@ -29,7 +29,7 @@ class LinesTest(unittest.TestCase):
 
     def test_rect(self):
 
-        c = Controller(component_language='en')
+        c = Controller(component_language='en', symbol_set='iec')
         c.on_new()
 
         start = Pos(5, 5)
@@ -42,7 +42,7 @@ class LinesTest(unittest.TestCase):
 
     def test_magic_line(self):
 
-        c = Controller(component_language='en')
+        c = Controller(component_language='en', symbol_set='iec')
         c.on_new()
 
         # connect rectangle sides

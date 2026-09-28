@@ -8,6 +8,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont, QIntValidator
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFontComboBox,
@@ -25,6 +26,15 @@ PreferenceSetting = collections.namedtuple('PreferenceSetting', ['type', 'entry'
 
 
 class Preferences:
+    CHARACTER_UPGRADES = {
+        'LINE_HOR': ('-', '─'),
+        'LINE_VERT': ('|', '│'),
+        'CROSSING': (')', '╳'),
+        'LOWER_CORNER': ("'", '└'),
+        'UPPER_CORNER': ('.', '┌'),
+        'TERMINAL2': ('o', 'O'),
+    }
+
     values = {
         'DEFAULT_ROWS': 36,
         'DEFAULT_COLS': 72,
@@ -34,13 +44,14 @@ class Preferences:
         'PANGO_FONT': False,
         'FONT': 'monospace',
         'SELECTION_DRAG': False,
-        'LINE_HOR': '-',
-        'LINE_VERT': '|',
-        'CROSSING': ')',
-        'LOWER_CORNER': "'",
-        'UPPER_CORNER': '.',
+        'SYMBOL_SET': 'iec',
+        'LINE_HOR': '─',
+        'LINE_VERT': '│',
+        'CROSSING': '╳',
+        'LOWER_CORNER': '└',
+        'UPPER_CORNER': '┌',
         'TERMINAL1': None,
-        'TERMINAL2': 'o',
+        'TERMINAL2': 'O',
         'TERMINAL3': '+',
         'TERMINAL4': "'",
         'TERMINAL4_VERT': '.',
@@ -72,6 +83,9 @@ class Preferences:
         try:
             with open(self._filename, 'r', encoding='utf-8') as settings_file:
                 saved_values = json.load(settings_file)
+            for key, (old_value, new_value) in self.CHARACTER_UPGRADES.items():
+                if saved_values.get(key) == old_value:
+                    saved_values[key] = new_value
             self.values.update(saved_values)
             print(_("Preferences have been read from: %s" % self._filename))
         except (OSError, ValueError):
@@ -133,6 +147,16 @@ class PreferencesDialog(QDialog):
         self._add_boolean(grid_form, _("Drag selection"), 'SELECTION_DRAG')
         tabs.addTab(grid_page, _("Grid"))
 
+        symbols_page = QWidget(self)
+        symbols_form = QFormLayout(symbols_page)
+        self._add_choice(
+            symbols_form,
+            _("Symbol standard"),
+            'SYMBOL_SET',
+            ((_('IEC'), 'iec'), (_('ANSI/IEEE'), 'ansi_ieee')),
+        )
+        tabs.addTab(symbols_page, _("Symbols"))
+
         lines_page = QWidget(self)
         lines_form = QFormLayout(lines_page)
         for label, key in (
@@ -188,6 +212,16 @@ class PreferencesDialog(QDialog):
         self.entries[key] = PreferenceSetting('bool', entry)
         form.addRow(label, entry)
 
+    def _add_choice(self, form, label, key, choices):
+        entry = QComboBox(self)
+        entry.setObjectName(key.lower())
+        for title, value in choices:
+            entry.addItem(title, value)
+        index = entry.findData(self._value(key))
+        entry.setCurrentIndex(index if index >= 0 else entry.findData('iec'))
+        self.entries[key] = PreferenceSetting('choice', entry)
+        form.addRow(label, entry)
+
     def _save(self):
         for key, setting in self.entries.items():
             entry = setting.entry
@@ -197,6 +231,8 @@ class PreferencesDialog(QDialog):
                 value = int(entry.text())
             elif setting.type == 'bool':
                 value = entry.isChecked()
+            elif setting.type == 'choice':
+                value = entry.currentData()
             else:
                 value = entry.currentFont().family()
             Preferences.values[key] = value

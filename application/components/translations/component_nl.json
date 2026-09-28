@@ -2,7 +2,7 @@
   "Resistor": {
     "name": "Weerstand"
   },
-  "Pot": {
+  "Potentiometer": {
     "name": "Potmeter"
   },
   "Transformer": {
@@ -72,33 +72,7 @@
     "name": "Aarde/Vcc"
   },
   "Voltage": {
-    "name": "Spanningsbron",
-    "grid": {
-      "N": [
-        "   |      ",
-        "  /+\\     ",
-        " (   )    ",
-        "  \\-/     ",
-        "   |      ",
-        "          "
-      ],
-      "E": [
-        "   _      ",
-        "  / \\     ",
-        "-(- +)-   ",
-        "  \\_/     ",
-        "          ",
-        "          "
-      ],
-      "S": [
-        "   |      ",
-        "  /-\\     ",
-        " (   )    ",
-        "  \\+/     ",
-        "   |       ",
-        "          "
-      ]
-    }
+    "name": "Spanningsbron"
   },
   "NTC-Resistor": {
     "name": "NTC-Weerstand"

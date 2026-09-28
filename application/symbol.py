@@ -28,6 +28,7 @@ from application import (
     ROW,
     TEXT,
     VERTICAL,
+    WIRE,
 )
 from application import gettext as _
 from application.magic_line_settings import MagicLineSettings
@@ -57,7 +58,8 @@ class Symbol:
 
     ORIENTATION = {0: "N", 1: "E", 2: "S", 3: "W"}
 
-    def __init__(self, component_key=None, identity=None, grid=None, ori=None, mirrored=None, startpos=None, endpos=None):
+    def __init__(self, component_key=None, identity=None, grid=None, ori=None, mirrored=None, startpos=None, endpos=None,
+                 terminals=None):
         self._component_key = component_key
         self._identity = component_key if component_key is not None else identity
         self._has_pickpoint = True
@@ -69,6 +71,7 @@ class Symbol:
             self._grid = self.default
         else:
             self._grid = grid
+        self._terminals = terminals or {}
         supported = self._supported_orientation_indexes()
         requested = 0 if ori is None else ori
         self._ori = requested if requested in supported else supported[0]
@@ -216,6 +219,55 @@ class Symbol:
         """
         return self._repr
 
+    def grid_bounds(self):
+        """Return the inclusive occupied bounds in grid-cell coordinates."""
+        self._representation()
+        positions = [pos for pos, value in self._repr.items() if value != CELL_ERASE]
+        if not positions:
+            return self._startpos, self._startpos
+        return (
+            Pos(min(pos.x for pos in positions), min(pos.y for pos in positions)),
+            Pos(max(pos.x for pos in positions), max(pos.y for pos in positions)),
+        )
+
+    def terminal_positions(self):
+        """Return this component's exposed terminal nodes in grid coordinates."""
+        if self._component_key is None:
+            return []
+        direction = self.ORIENTATION[self._ori]
+        layout = self._terminals.get(direction, [])
+        width = max(map(len, self._grid[direction])) if self._grid.get(direction) else 0
+        return [
+            {
+                'name': terminal['name'],
+                'direction': (
+                    {'W': 'E', 'E': 'W'}.get(terminal['direction'], terminal['direction'])
+                    if self._mirrored else terminal['direction']
+                ),
+                'position': self._startpos + Pos(
+                    width - 1 - terminal['x'] if self._mirrored else terminal['x'],
+                    terminal['y'],
+                ),
+            }
+            for terminal in layout
+        ]
+
+    def hit_test(self, pos):
+        """Test whether a grid cell hits this symbol's visible footprint."""
+        self._representation()
+        if self._component_key is None:
+            return pos in self._repr
+        upper_left, lower_right = self.grid_bounds()
+        return (upper_left.x <= pos.x <= lower_right.x
+                and upper_left.y <= pos.y <= lower_right.y)
+
+    def overlaps_rect(self, rect):
+        """Test overlap with a half-open selection rectangle in grid cells."""
+        upper_left, lower_right = self.grid_bounds()
+        rect_upper_left, rect_lower_right = rect
+        return (upper_left.x < rect_lower_right.x and lower_right.x >= rect_upper_left.x
+                and upper_left.y < rect_lower_right.y and lower_right.y >= rect_upper_left.y)
+
     def memo(self):
         """Return entry for the actions as recorded in the memo."""
         component_key = json.dumps(self._component_key, ensure_ascii=False)
@@ -237,6 +289,7 @@ class Symbol:
             mirrored=mirrored,
             startpos=startpos,
             endpos=endpos,
+            terminals=copy.deepcopy(self._terminals),
         )
 
     @property
@@ -751,6 +804,101 @@ class MagLine(Line):
     def memo(self):
         str = f"{MAG_LINE}:{self._type},{self._startpos},{self._endpos}"
         return str
+
+
+class Wire(Symbol):
+    """An explicitly routed orthogonal connection between grid nodes."""
+
+    CORNERS = {
+        frozenset(('N', 'E')): '└',
+        frozenset(('N', 'W')): '┘',
+        frozenset(('S', 'E')): '┌',
+        frozenset(('S', 'W')): '┐',
+    }
+
+    def __init__(self, path, connected_start=False, connected_end=False, terminal_char=None):
+        path = [Pos(point.x, point.y) for point in path]
+        if not path:
+            raise ValueError('A wire needs at least one grid point')
+        if any(abs(second.x - first.x) + abs(second.y - first.y) != 1
+               for first, second in zip(path, path[1:])):
+            raise ValueError('Wire paths must contain adjacent orthogonal points')
+        super().__init__(grid={'N': ['?']}, startpos=path[0], endpos=path[-1])
+        self.path = path
+        self.connected_start = bool(connected_start)
+        self.connected_end = bool(connected_end)
+        self.terminal_char = terminal_char
+        self._is_symbol = False
+        self._is_line = True
+        self._is_wire = True
+        self._representation()
+
+    @staticmethod
+    def _direction(first, second):
+        delta = second - first
+        if delta.x > 0:
+            return 'E'
+        if delta.x < 0:
+            return 'W'
+        if delta.y > 0:
+            return 'S'
+        return 'N'
+
+    @classmethod
+    def glyph_for_directions(cls, directions):
+        directions = frozenset(directions)
+        if directions in (frozenset(('E', 'W')), frozenset(('E',)), frozenset(('W',))):
+            return '─'
+        if directions in (frozenset(('N', 'S')), frozenset(('N',)), frozenset(('S',))):
+            return '│'
+        return cls.CORNERS.get(directions, '┼')
+
+    def _representation(self):
+        self._repr = {}
+        for index, pos in enumerate(self.path):
+            directions = set()
+            if index > 0:
+                directions.add(self._direction(pos, self.path[index - 1]))
+            if index + 1 < len(self.path):
+                directions.add(self._direction(pos, self.path[index + 1]))
+            connected = ((index == 0 and self.connected_start)
+                         or (index == len(self.path) - 1 and self.connected_end))
+            if connected:
+                char = 'O'
+            elif index in (0, len(self.path) - 1) and self.terminal_char:
+                char = self.terminal_char
+            elif not directions:
+                char = '─'
+            else:
+                char = self.glyph_for_directions(directions)
+            self._repr[pos] = char
+
+    def copy(self):
+        return Wire(self.path, self.connected_start, self.connected_end, self.terminal_char)
+
+    @staticmethod
+    def manhattan_path(start, end, horizontal_first=True):
+        corner = Pos(end.x, start.y) if horizontal_first else Pos(start.x, end.y)
+        points = [Pos(start.x, start.y)]
+        for target in (corner, end):
+            current = points[-1]
+            while current != target:
+                dx = 0 if current.x == target.x else (1 if target.x > current.x else -1)
+                dy = 0 if current.y == target.y else (1 if target.y > current.y else -1)
+                current = current + Pos(dx, dy)
+                points.append(current)
+        return points
+
+    def memo(self):
+        return '{}:{}'.format(
+            WIRE,
+            json.dumps({
+                'path': [[pos.x, pos.y] for pos in self.path],
+                'connected_start': self.connected_start,
+                'connected_end': self.connected_end,
+                'terminal_char': self.terminal_char,
+            }, ensure_ascii=False),
+        )
 
 
 class MagLineOld(MagLine):

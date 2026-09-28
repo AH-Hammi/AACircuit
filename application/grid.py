@@ -56,7 +56,7 @@ class Grid:
     def cell(self, pos):
         col, row = pos.xy
         # TODO return space or x00?
-        if row < self.nr_rows and col < self.nr_cols:
+        if 0 <= row < self.nr_rows and 0 <= col < self.nr_cols:
             return self._grid[row][col]
         else:
             return ' '
@@ -64,7 +64,7 @@ class Grid:
     def set_cell(self, pos, value):
         row = pos.y
         col = pos.x
-        if row < self.nr_rows and col < self.nr_cols:
+        if 0 <= row < self.nr_rows and 0 <= col < self.nr_cols:
             # hex zero 'erases' content
             if value == CELL_ERASE:
                 self._grid[row][col] = CELL_EMPTY

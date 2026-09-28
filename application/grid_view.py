@@ -45,7 +45,7 @@ from application.selection import (
     SelectionRect,
     SelectionRow,
 )
-from application.symbol import Arrow, DirLine, Line, MagLine, Rect, Text
+from application.symbol import Arrow, DirLine, Line, MagLine, Rect, Text, Wire
 
 
 class GridView(QWidget):
@@ -60,6 +60,18 @@ class GridView(QWidget):
         self._hover_previous_pos = Pos(0, 0)
 
         self._selection = Selection(None)
+        self._selected_canvas_symbol = None
+        self._moving_symbol = None
+        self._move_anchor = None
+        self._move_old_start = None
+        self._move_old_end = None
+        self._move_bounds = None
+        self._canvas_objects = []
+        self._wire_dragging = False
+        self._wire_start = None
+        self._wire_start_terminal = None
+        self._wire_preview_end = None
+        self._wire_preview_path = None
 
         # selection position
         self._drag_dir = None
@@ -97,6 +109,9 @@ class GridView(QWidget):
         pub.subscribe(self.on_character_selected, 'CHARACTER_SELECTED')
         pub.subscribe(self.on_symbol_selected, 'SYMBOL_SELECTED')
         pub.subscribe(self.on_objects_selected, 'OBJECTS_SELECTED')
+        pub.subscribe(self.on_object_selection_result, 'OBJECT_SELECTION_RESULT')
+        pub.subscribe(self.on_canvas_objects, 'CANVAS_OBJECTS')
+        pub.subscribe(self.on_wire_preview_result, 'WIRE_PREVIEW_RESULT')
 
         pub.subscribe(self.on_selecting_eraser, 'SELECTING_ERASER')
         pub.subscribe(self.on_selecting_rect, 'SELECTING_RECT')
@@ -201,83 +216,152 @@ class GridView(QWidget):
     # SELECTIONs
 
     def on_nothing_selected(self):
+        self._cancel_wire_gesture()
         self._selection = Selection(None)
+        self._selected_canvas_symbol = None
+        self._moving_symbol = None
+        self._send_active_tool(None)
         self.update()
 
+    def _cancel_wire_gesture(self):
+        self._wire_dragging = False
+        self._wire_start = None
+        self._wire_start_terminal = None
+        self._wire_preview_end = None
+        self._wire_preview_path = None
+
     def on_add_text(self):
+        self._cancel_wire_gesture()
         self._selection = Selection(item=TEXT, state=SELECTING)
         self._text = ""
         self._symbol = Text(Pos(0, 0), self._text)
+        self._send_active_tool('insert_text')
         self.setFocus()
 
     def on_add_textblock(self, text):
+        self._cancel_wire_gesture()
         self._selection = Selection(item=TEXT_BLOCK, state=SELECTING)
         self._symbol = Text(Pos(0, 0), text)
         self._text = text
+        self._send_active_tool('insert_text_line')
 
     def on_character_selected(self, char):
+        self._cancel_wire_gesture()
         self._selection = Selection(item=CHARACTER, state=SELECTED)
         self._symbol = char
+        self._send_active_tool('character:' + chr(char.identity))
 
     def on_symbol_selected(self, symbol):
+        self._cancel_wire_gesture()
         # only components (can be rotated or mirrored)
         self._selection = Selection(item=COMPONENT, state=SELECTED)
         self._symbol = symbol
+        self._send_active_tool(None)
 
     def on_objects_selected(self, objects):
+        self._cancel_wire_gesture()
         # one object or multiple objects have been selected
         self._selection = Selection(item=OBJECTS)
         self._selection.state = SELECTED
         self._objects = objects
+        self._send_active_tool(None)
+
+    def on_canvas_objects(self, objects):
+        self._canvas_objects = objects
+        if self._selected_canvas_symbol is not None:
+            self._set_object_selection_bounds(self._selected_canvas_symbol)
+        self.update()
+
+    def _set_object_selection_bounds(self, symbol):
+        upper_left, lower_right = symbol.grid_bounds()
+        self._drag_startpos = upper_left.view_xy()
+        self._drag_endpos = Pos(lower_right.x + 1, lower_right.y + 1).view_xy()
+        self._selection.startpos = self._drag_startpos
+        self._selection.endpos = self._drag_endpos
+        self._selection.maxpos = self.max_pos_grid
+
+    def on_object_selection_result(self, symbol, pos):
+        self._selected_canvas_symbol = symbol
+        self._selection = SelectionObject()
+        if symbol is not None:
+            self._set_object_selection_bounds(symbol)
+        else:
+            self._drag_startpos = None
+            self._drag_endpos = None
+        self.update()
 
     def on_selecting_object(self, objects):
+        self._cancel_wire_gesture()
         # select a single object
         self._selection = SelectionObject()
         self._objects = objects
+        self._selected_canvas_symbol = None
+        self._send_active_tool('select_object')
 
     def on_selecting_eraser(self):
+        self._cancel_wire_gesture()
         self._selection = SelectionEraser()
+        self._send_active_tool('eraser')
 
     def on_selecting_rect(self, objects):
+        self._cancel_wire_gesture()
         self._selection = SelectionRect()
         self._objects = objects
+        self._send_active_tool('select_rect')
 
     def on_selecting_arrow(self, objects):
         self._selection = SelectionArrow()
         self._objects = objects
 
     def on_selecting_row(self, action):
+        self._cancel_wire_gesture()
         self._selection = SelectionRow(action)
+        self._send_active_tool('insert_row' if action == 'insert' else 'remove_row')
         pub.sendMessage('STATUS_MESSAGE', msg='')
 
     def on_selecting_col(self, action):
+        self._cancel_wire_gesture()
         self._selection = SelectionCol(action)
+        self._send_active_tool('insert_col' if action == 'insert' else 'remove_col')
         pub.sendMessage('STATUS_MESSAGE', msg='')
 
     # LINES
 
     def on_draw_mag_line(self):
+        self._cancel_wire_gesture()
         self._selection = Selection(item=MAG_LINE)
         self._symbol = MagLine(Pos(0, 0), Pos(1, 1), self._grid.cell)
+        self._send_active_tool('auto_line')
 
     def on_draw_dir_line(self, type):
+        self._cancel_wire_gesture()
         self._selection = Selection(item=DIR_LINE)
         self._symbol = DirLine(Pos(0, 0), Pos(1, 1))
+        self._send_active_tool('free_line')
         pub.sendMessage('STATUS_MESSAGE', msg='')
 
     def on_draw_line(self, type):
+        self._cancel_wire_gesture()
         self._selection = Selection(item=LINE)
         self._symbol = Line(Pos(0, 0), Pos(1, 1), type=type)
+        line_tool = {
+            Line.LINE2: 'line_2', Line.LINE3: 'line_3', Line.LINE4: 'line_4',
+        }.get(type, 'line_1')
+        self._send_active_tool(line_tool)
         pub.sendMessage('STATUS_MESSAGE', msg='')
 
     def on_draw_rect(self):
+        self._cancel_wire_gesture()
         self._selection = Selection(item=DRAW_RECT)
         self._symbol = Rect(Pos(0, 0), Pos(1, 1))
+        self._send_active_tool('draw_rect')
         pub.sendMessage('STATUS_MESSAGE', msg='')
 
     def on_draw_arrow(self):
+        self._cancel_wire_gesture()
         self._selection = Selection(item=ARROW)
         self._symbol = Arrow(Pos(0, 0), Pos(1, 1))
+        self._send_active_tool('arrow')
         pub.sendMessage('STATUS_MESSAGE', msg='')
 
     # TEXT ENTRY
@@ -290,6 +374,7 @@ class GridView(QWidget):
         self.draw_background(ctx)
         self.draw_gridlines(ctx)
         self.draw_content(ctx)
+        self.draw_terminal_handles(ctx)
         self.draw_selection(ctx)
 
     def draw_border(self, ctx, w, h):
@@ -375,12 +460,14 @@ class GridView(QWidget):
         if self._selection.item in (CHARACTER, COMPONENT):
             self._symbol.draw(ctx, self._hover_pos)
         elif self._selection.item in (OBJECT, RECT):
-            # draw the selection rectangle
-            self._selection.startpos = self._drag_startpos
-            self._selection.endpos = self._drag_endpos
-            self._selection.maxpos = self.max_pos_grid
-            self._selection.draw(ctx)
-            self.mark_all_objects(ctx)
+            if self._selected_canvas_symbol is not None:
+                self.draw_object_outline(ctx, self._selected_canvas_symbol)
+            else:
+                self._selection.startpos = self._drag_startpos
+                self._selection.endpos = self._drag_endpos
+                self._selection.maxpos = self.max_pos_grid
+                self._selection.draw(ctx)
+                self.mark_all_objects(ctx)
         elif self._selection.item == OBJECTS:
             self.mark_all_objects(ctx)
             self.draw_selected_objects(ctx)
@@ -388,12 +475,24 @@ class GridView(QWidget):
     def draw_selecting_state(self, ctx):
         if self._selection.item == OBJECT:
             self.mark_all_objects(ctx)
-            self.draw_cursor(ctx)
+            if self._selected_canvas_symbol is None:
+                self.draw_cursor(ctx)
+            else:
+                self.draw_object_outline(ctx, self._selected_canvas_symbol)
         elif self._selection.item in (TEXT, TEXT_BLOCK):
             self.draw_cursor(ctx)
             self._symbol.startpos = self._hover_pos.grid_cr()
             self._symbol.text = self._text
             self._symbol.draw(ctx)
+        elif self._selection.item == MAG_LINE and self._wire_start is not None:
+            end = self._wire_preview_end or self._wire_start
+            terminal = self._terminal_at(end)
+            if self._wire_preview_path:
+                Wire(
+                    self._wire_preview_path,
+                    connected_start=self._wire_start_terminal is not None,
+                    connected_end=terminal is not None or self._wire_at(end),
+                ).draw(ctx)
         else:
             ctx.set_source_rgb(0.5, 0.5, 0.75)
             ctx.set_line_join(cairo.LINE_JOIN_ROUND)
@@ -432,7 +531,7 @@ class GridView(QWidget):
     def mark_all_objects(self, ctx):
         """Mark all objects on the grid canvas."""
         ctx.save()
-        for ref in self._objects:
+        for ref in self._objects or []:
             if ref.symbol.has_pickpoint:
                 if (self._show_symbol_pickpoints and ref.symbol.is_symbol) or \
                         (self._show_line_pickpoints and ref.symbol.is_line) or \
@@ -446,6 +545,45 @@ class GridView(QWidget):
                     ctx.move_to(pos.x, y_xbase)
                     ctx.show_text(MARK_CHAR)  # mark the upper-left corner
         ctx.restore()
+
+    def draw_object_outline(self, ctx, symbol):
+        upper_left, lower_right = symbol.grid_bounds()
+        top_left = upper_left.view_xy()
+        size = Pos(lower_right.x - upper_left.x + 1, lower_right.y - upper_left.y + 1).view_xy()
+        ctx.save()
+        ctx.set_source_rgb(0.05, 0.48, 0.85)
+        ctx.set_line_width(2)
+        ctx.rectangle(top_left.x + 1, top_left.y + 1, size.x - 2, size.y - 2)
+        ctx.stroke()
+        ctx.restore()
+
+    def draw_terminal_handles(self, ctx):
+        if self._selection.item not in (OBJECT, LINE, MAG_LINE) and self._selected_canvas_symbol is None:
+            return
+        ctx.save()
+        ctx.set_source_rgb(0.0, 0.35, 0.75)
+        ctx.select_font_face('monospace', cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_BOLD)
+        for symbol in self._canvas_objects:
+            for terminal in symbol.terminal_positions():
+                pos = terminal['position'].view_xy()
+                ctx.move_to(pos.x, pos.y + Preferences.values['FONTSIZE'])
+                ctx.show_text('O')
+        ctx.restore()
+
+    def _terminal_at(self, pos):
+        for symbol in reversed(self._canvas_objects):
+            for terminal in symbol.terminal_positions():
+                if terminal['position'] == pos:
+                    return terminal
+        return None
+
+    def _wire_at(self, pos):
+        return any(getattr(symbol, '_is_wire', False) and pos in symbol.path
+                   for symbol in self._canvas_objects)
+
+    def on_wire_preview_result(self, path):
+        self._wire_preview_path = path
+        self.update()
 
     def draw_selected_objects(self, ctx):
         """Draw multiple objects selection."""
@@ -516,6 +654,9 @@ class GridView(QWidget):
         elif self._selection.item == DIR_LINE:
             pub.sendMessage("PASTE_DIR_LINE", startpos=startpos, endpos=endpos)
 
+        # Keep the chosen tool active, but reset its gesture for the next draw.
+        self._selection.state = IDLE
+
     def on_drag_update(self, widget, x_offset, y_offset):
         if self._selection.state == SELECTING and self._selection.item in (DRAW_RECT, ARROW, RECT, ERASER, LINE, MAG_LINE, DIR_LINE):
             pass
@@ -584,12 +725,18 @@ class GridView(QWidget):
         value = event.key()
         text = event.text()
         if value == Qt.Key.Key_Escape:
-            if self._selection.state == SELECTING and self._selection.item in (
-                DRAW_RECT, ARROW, LINE, MAG_LINE, DIR_LINE, RECT, ERASER,
-            ):
-                self._selection.state = IDLE
-            elif self._selection.item == OBJECT:
-                self._selection.state = SELECTING
+            self._wire_dragging = False
+            self._wire_start = None
+            self._wire_start_terminal = None
+            self._wire_preview_end = None
+            self._wire_preview_path = None
+            if self._moving_symbol is not None:
+                pub.sendMessage('CANCEL_MOVE_OBJECT', symbol=self._moving_symbol)
+            self._selection = Selection(None)
+            self._selected_canvas_symbol = None
+            self._moving_symbol = None
+            self._mouse_dragging = False
+            self._send_active_tool(None)
             self.update()
             return
         if text.lower() == 'r' and self._selection.item in (CHARACTER, COMPONENT, OBJECTS, TEXT_BLOCK):
@@ -614,6 +761,36 @@ class GridView(QWidget):
         pos = self.calc_position(x, y)
         pub.sendMessage('POINTER_MOVED', pos=pos.grid_cr())
 
+        if self._selection.item == MAG_LINE and event.button() == Qt.MouseButton.LeftButton:
+            self._wire_start = pos.grid_cr()
+            self._wire_start_terminal = self._terminal_at(self._wire_start)
+            self._wire_preview_end = self._wire_start
+            self._wire_preview_path = [self._wire_start]
+            self._wire_dragging = True
+            self._mouse_dragging = True
+            self._drag_startpos = pos
+            self._drag_currentpos = pos
+            self._selection.state = SELECTING
+            self.update()
+            event.accept()
+            return
+
+        if self._selection.item == OBJECT and event.button() == Qt.MouseButton.LeftButton:
+            self._moving_symbol = None
+            self._move_anchor = pos.grid_cr()
+            pub.sendMessage('SELECT_OBJECT_AT', pos=pos.grid_cr())
+            if self._selected_canvas_symbol is not None:
+                symbol = self._selected_canvas_symbol
+                self._moving_symbol = symbol
+                self._move_old_start = Pos(symbol.startpos.x, symbol.startpos.y)
+                self._move_old_end = Pos(symbol.endpos.x, symbol.endpos.y)
+                self._move_bounds = symbol.grid_bounds()
+                self._move_grab_offset = self._move_anchor - self._move_old_start
+                self._mouse_dragging = True
+            self.update()
+            event.accept()
+            return
+
         draw_items = (DRAW_RECT, ARROW, ERASER, RECT, LINE, MAG_LINE, DIR_LINE)
         if not Preferences.values['SELECTION_DRAG'] and self._selection.item in draw_items:
             if self._selection.state == IDLE:
@@ -633,14 +810,77 @@ class GridView(QWidget):
 
     def mouseMoveEvent(self, event):
         point = event.position()
-        if self._mouse_dragging and self._drag_startpos is not None:
+        if self._wire_dragging:
+            self._wire_preview_end = self.calc_position(point.x(), point.y()).grid_cr()
+            terminal = self._terminal_at(self._wire_preview_end)
+            pub.sendMessage(
+                'WIRE_PREVIEW_REQUEST', startpos=self._wire_start,
+                endpos=self._wire_preview_end,
+                start_direction=(self._wire_start_terminal or {}).get('direction'),
+                end_direction=(terminal or {}).get('direction'),
+            )
+        elif self._moving_symbol is not None:
+            current = self.calc_position(point.x(), point.y()).grid_cr()
+            candidate = current - self._move_grab_offset
+            upper_left, lower_right = self._move_bounds
+            dx = candidate.x - self._move_old_start.x
+            dy = candidate.y - self._move_old_start.y
+            dx = max(-upper_left.x, min(dx, self._grid.nr_cols - 1 - lower_right.x))
+            dy = max(-upper_left.y, min(dy, self._grid.nr_rows - 1 - lower_right.y))
+            new_start = self._move_old_start + Pos(dx, dy)
+            delta = new_start - self._move_old_start
+            new_end = self._move_old_end + delta if self._moving_symbol.is_line else self._move_old_end
+            pub.sendMessage(
+                'PREVIEW_MOVE_OBJECT', symbol=self._moving_symbol,
+                startpos=new_start, endpos=new_end,
+            )
+        elif self._mouse_dragging and self._drag_startpos is not None:
             offset = Pos(point.x(), point.y()) - self._drag_startpos
             self.on_drag_update(None, offset.x, offset.y)
         self.on_hover(None, event)
         self.update()
 
     def mouseReleaseEvent(self, event):
-        if self._mouse_dragging and event.button() == Qt.MouseButton.LeftButton:
+        if self._wire_dragging and event.button() == Qt.MouseButton.LeftButton:
+            end = self.calc_position(event.position().x(), event.position().y()).grid_cr()
+            terminal = self._terminal_at(end)
+            if end != self._wire_start:
+                pub.sendMessage(
+                    'WIRE_PREVIEW_REQUEST', startpos=self._wire_start,
+                    endpos=end,
+                    start_direction=(self._wire_start_terminal or {}).get('direction'),
+                    end_direction=(terminal or {}).get('direction'),
+                )
+                pub.sendMessage(
+                    'PASTE_WIRE',
+                    startpos=self._wire_start,
+                    endpos=end,
+                    start_direction=(self._wire_start_terminal or {}).get('direction'),
+                    end_direction=(terminal or {}).get('direction'),
+                    connected_start=self._wire_start_terminal is not None or self._wire_at(self._wire_start),
+                    connected_end=terminal is not None or self._wire_at(end),
+                )
+            self._wire_dragging = False
+            self._wire_start = None
+            self._wire_start_terminal = None
+            self._wire_preview_end = None
+            self._wire_preview_path = None
+            self._mouse_dragging = False
+            self._selection.state = IDLE
+        elif self._moving_symbol is not None and event.button() == Qt.MouseButton.LeftButton:
+            symbol = self._moving_symbol
+            new_start = Pos(symbol.startpos.x, symbol.startpos.y)
+            new_end = Pos(symbol.endpos.x, symbol.endpos.y)
+            pub.sendMessage(
+                'MOVE_OBJECT', symbol=symbol,
+                old_start=self._move_old_start, old_end=self._move_old_end,
+                new_start=new_start, new_end=new_end,
+            )
+            self._moving_symbol = None
+            self._mouse_dragging = False
+            self._set_object_selection_bounds(symbol)
+            self._selection.state = SELECTING
+        elif self._mouse_dragging and event.button() == Qt.MouseButton.LeftButton:
             point = event.position()
             offset = Pos(point.x(), point.y()) - self._drag_startpos
             self.on_drag_update(None, offset.x, offset.y)
@@ -648,6 +888,10 @@ class GridView(QWidget):
             self._mouse_dragging = False
         self.update()
         event.accept()
+
+    @staticmethod
+    def _send_active_tool(tool):
+        pub.sendMessage('ACTIVE_TOOL_CHANGED', tool=tool)
 
     def on_hover(self, widget, event):
         if not self.hasFocus():

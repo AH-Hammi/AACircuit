@@ -83,6 +83,7 @@ DRAW_RECT = 'rect'
 ARROW = 'arrw'
 LINE = 'line'
 MAG_LINE = 'magl'
+WIRE = 'wire'
 DIR_LINE = 'dirl'
 
 MARK_CHAR = 'X'
