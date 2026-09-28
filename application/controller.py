@@ -3,45 +3,74 @@ AACircuit.py
 2020-03-02 JvO
 """
 
+import collections
+import json
 import os
 import re
-import json
-import pyclip
-import collections
-from pubsub import pub
 
+from pubsub import pub
+from PySide6.QtWidgets import QApplication
+
+from application import (
+    ARROW,
+    CHARACTER,
+    COL,
+    COMPONENT,
+    DIR_LINE,
+    DRAW_RECT,
+    ERASER,
+    ERROR,
+    INSERT,
+    LINE,
+    MAG_LINE,
+    REMOVE,
+    ROW,
+    TEXT,
+    WARNING,
+)
 from application import gettext as _
-from application import ERROR, WARNING
-from application import REMOVE, INSERT
-from application import ERASER, COMPONENT, CHARACTER, TEXT, COL, ROW, DRAW_RECT, ARROW, LINE, MAG_LINE, DIR_LINE
-from application.pos import Pos
+from application.component_library import ComponentLibrary
+from application.file import (
+    InputFileAscii,
+    InputFileChooser,
+    OutputFileAscii,
+    OutputFileChooser,
+)
 from application.grid import Grid
 from application.magic_line_settings import MagicLineSettings
-from application.preferences import Preferences
 from application.main_window import MainWindow
 from application.memo_editing import MemoEditingDialog
-from application.component_library import ComponentLibrary
-from application.file import InputFileChooser, InputFileAscii, OutputFileChooser, OutputFileAscii, OutputFilePDF, PrintOperation
-from application.symbol import Eraser, Character, Text, Line, MagLine, MagLineOld, DirLine, Rect, Arrow, Row, Column
+from application.pos import Pos
+from application.preferences import Preferences
+from application.symbol import (
+    Arrow,
+    Character,
+    Column,
+    DirLine,
+    Eraser,
+    Line,
+    MagLine,
+    MagLineOld,
+    Rect,
+    Row,
+    Text,
+)
 
 SelectedObjects = collections.namedtuple('SelectedObjects', ['startpos', 'symbol'])
 Action = collections.namedtuple('Action', ['action', 'symbol'])
 
 
-class Controller(object):
+class Controller:
 
-    def __init__(self):
+    def __init__(self, component_language=None):
         self.prefs = Preferences()
         self.ml_settings = MagicLineSettings()
         self.gui = MainWindow()
-        self.complib = ComponentLibrary()
+        self.complib = ComponentLibrary(language=component_language)
         self.filename = None
 
         self.init_stack()
         self.init_grid()
-
-        # True: read original (Delphi/Pascal) AACircuit file
-        self._import_legacy = False
 
         all_components = [key for key in self.complib.components]
         if self.complib.nr_libraries() == 1:
@@ -98,13 +127,7 @@ class Controller(object):
         pub.subscribe(self.on_open, 'OPEN_FILE')
         pub.subscribe(self.on_save, 'SAVE_FILE')
         pub.subscribe(self.on_save_as, 'SAVE_AS_FILE')
-        pub.subscribe(self.on_import_aacircuit, 'IMPORT_AACIRCUIT')
-        pub.subscribe(self.on_export_as_pdf, 'EXPORT_AS_PDF')
         pub.subscribe(self.on_export_as_ascii, 'EXPORT_AS_ASCII')
-
-        # pub.subscribe(self.on_begin_print, 'BEGIN_PRINT')
-        pub.subscribe(self.on_print_file, 'PRINT_FILE')
-        pub.subscribe(self.on_end_print, 'END_PRINT')
 
         # open/save grid from/to file
         pub.subscribe(self.on_read_from_file, 'READ_FROM_FILE')
@@ -114,14 +137,6 @@ class Controller(object):
         # grid
         pub.subscribe(self.on_grid_size, 'GRID_SIZE')
         pub.subscribe(self.on_redraw_grid, 'REDRAW_GRID')
-
-    @property
-    def legacy(self):
-        return self._import_legacy
-
-    @legacy.setter
-    def legacy(self, value):
-        self._import_legacy = value
 
     def init_stack(self):
         # action stack with the last cut/pasted symbol(s)
@@ -150,11 +165,7 @@ class Controller(object):
         return self.grid.cell(pos)
 
     def show_all(self):
-        # DEBUG
-        # self._import_legacy = True
-        # self.on_read_from_file('tests/files/original_741.aac')
-        # self.on_read_from_file('tests/files/original_JKMasterSlave.aac')
-        self.gui.show_all()
+        self.gui.show()
 
     def revert_action(self, stack):
 
@@ -222,7 +233,6 @@ class Controller(object):
         pub.sendMessage('NOTHING_SELECTED')
 
     def on_open(self):
-        self._import_legacy = False
         dialog = InputFileChooser()  # noqa: F841
 
     def on_save(self):
@@ -232,19 +242,10 @@ class Controller(object):
     def on_save_as(self):
         dialog = OutputFileChooser()  # noqa: F841
 
-    def on_import_aacircuit(self):
-        self._import_legacy = True
-        dialog = InputFileChooser()  # noqa: F841
-
-    def on_export_as_pdf(self, filename=None):
-        if filename is None:
-            if self.filename is None:
-                filename = _("Untitled.pdf")
-            else:
-                filename = os.path.splitext(os.path.basename(self.filename))[0] + '.pdf'
-        dialog = OutputFilePDF(filename)  # noqa: F841
-
     def on_export_as_ascii(self, filename=None):
+        if filename is not None:
+            pub.sendMessage('WRITE_TO_ASCII_FILE', filename=filename)
+            return
         if filename is None:
             if self.filename is None:
                 filename = _("Untitled_schema.txt")
@@ -252,21 +253,11 @@ class Controller(object):
                 filename = os.path.splitext(os.path.basename(self.filename))[0] + '.txt'
         dialog = OutputFileAscii(filename)  # noqa: F841
 
-    def on_end_print(self):
-        msg = _("Finished printing")
-        pub.sendMessage('STATUS_MESSAGE', msg=msg)
-
-    def on_print_file(self):
-        dialog = PrintOperation()  # noqa: F841
-        dialog.run()
-
     # Edit menu
 
     def remove_from_objects(self, symbol):
         for idx, sym in enumerate(self.objects):
-            # the id's differ as instances are copied before being added to the selection list
-            # if id(sym) == id(symbol):
-            if sym.startpos == symbol.startpos and sym.id == symbol.id:
+            if sym.startpos == symbol.startpos and sym.identity == symbol.identity:
                 del self.objects[idx]
                 break
 
@@ -477,7 +468,7 @@ class Controller(object):
         Copy the content of the grid to the clipboard.
         The rows are copied as ASCII lines, terminated by CR.
         """
-        pyclip.copy(self.grid.content_as_str())
+        QApplication.clipboard().setText(self.grid.content_as_str())
 
     def on_paste_grid(self):
         """
@@ -488,7 +479,7 @@ class Controller(object):
         pos = Pos(0, 0)
         relative_pos = Pos(0, 0)
         try:
-            content = pyclip.paste(text=True).splitlines()
+            content = QApplication.clipboard().text().splitlines()
         except Exception:
             content = []
         for line in content:
@@ -520,7 +511,7 @@ class Controller(object):
             pub.sendMessage('OBJECTS_SELECTED', objects=self.selected_objects)
             return True
 
-        except IOError as e:
+        except OSError as e:
             msg = _("Unable to open file for reading: {} error({}): {}").format(filename, e.errno, e.strerror)
             pub.sendMessage('STATUS_MESSAGE', msg=msg, type=WARNING)
             return False
@@ -575,12 +566,9 @@ class Controller(object):
 
     def on_write_to_file(self, filename):
         try:
-            fout = open(filename, 'w')
-            str = ""
-            for symbol in self.objects:
-                str += symbol.memo() + "\n"
-            fout.write(str)
-            fout.close()
+            lines = [symbol.memo() for symbol in self.objects]
+            with open(filename, 'w', encoding='utf-8', newline='') as fout:
+                fout.write(''.join(line + '\n' for line in lines))
             self.filename = filename
             msg = _("Schema has been saved in: {}").format(filename)
             pub.sendMessage('STATUS_MESSAGE', msg=msg)
@@ -588,23 +576,21 @@ class Controller(object):
             pub.sendMessage('FILE_OPENED')
             return True
 
-        except IOError:
+        except OSError:
             msg = _("Unable to open file for writing: {}").format(filename)
             pub.sendMessage('STATUS_MESSAGE', msg=msg, type=ERROR)
             return False
 
     def on_write_to_ascii_file(self, filename):
         try:
-            fout = open(filename, 'w')
-            str = self.grid.content_as_str()
-            fout.write(str)
-            fout.close()
+            with open(filename, 'w', encoding='utf-8', newline='') as fout:
+                fout.write(self.grid.content_as_str())
             self.filename = filename
             msg = _("ASCII Schema has been saved in: {}").format(filename)
             pub.sendMessage('STATUS_MESSAGE', msg=msg)
             return True
 
-        except IOError:
+        except OSError:
             msg = _("Unable to open file for writing: %s" % filename)
             pub.sendMessage('STATUS_MESSAGE', msg=msg, type=ERROR)
             return False
@@ -612,20 +598,12 @@ class Controller(object):
     def on_read_from_file(self, filename):
         self.filename = filename
         try:
-            file = open(filename, 'r')
-            str = file.readlines()
+            with open(filename, 'r', encoding='utf-8') as source:
+                memo = source.readlines()
             # start with a fresh grid
             self.init_stack()
             self.init_grid()
-            memo = []
-            for line in str:
-                memo.append(line)
-            file.close()
-
-            if self._import_legacy:
-                skipped = self.play_memo_original_aac(memo)
-            else:
-                skipped = self.play_memo(memo)
+            skipped = self.play_memo(memo)
 
             # empty the undo stack (from the played memo actions)
             # self.latest_action = []
@@ -643,7 +621,7 @@ class Controller(object):
             pub.sendMessage('NOTHING_SELECTED')
             return True
 
-        except IOError as e:
+        except OSError as e:
             msg = _("Unable to open file for reading: {} error({}): {}").format(filename, e.errno, e.strerror)
             pub.sendMessage('STATUS_MESSAGE', msg=msg, type=ERROR)
             return False
@@ -655,6 +633,28 @@ class Controller(object):
 
     def play_memo(self, memo):
 
+        def play_component(item):
+            prefix = COMPONENT + ':'
+            if not item.startswith(prefix):
+                return None
+            try:
+                payload = item[len(prefix):].strip()
+                component_name, end = json.JSONDecoder().raw_decode(payload)
+                values = payload[end:].lstrip(',').split(',')
+                if not isinstance(component_name, str) or len(values) != 4:
+                    return 1
+                orientation, mirrored, x, y = map(int, values)
+                pos = Pos(x, y)
+                symbol = self.complib.get_symbol(component_name)
+                symbol.ori = orientation
+                symbol.mirrored = mirrored
+                self.selected_objects = []
+                self.add_selected_object(symbol)
+                self.on_paste_objects(pos)
+                return 0
+            except (KeyError, TypeError, ValueError):
+                return 1
+
         def play_m1(m):
             skip = 0
             type = m.group(1)
@@ -665,19 +665,6 @@ class Controller(object):
                 x, y = m.group(4, 5)
                 pos = Pos(x, y)
                 symbol = Eraser(size)
-                self.selected_objects = []
-                self.add_selected_object(symbol)
-                self.on_paste_objects(pos)
-
-            elif type == COMPONENT:
-                id = int(m.group(2))
-                orientation = int(m.group(3))
-                mirrored = int(m.group(4))
-                x, y = m.group(5, 6)
-                pos = Pos(x, y)
-                symbol = self.complib.get_symbol_byid(id)
-                symbol.ori = orientation
-                symbol.mirrored = mirrored
                 self.selected_objects = []
                 self.add_selected_object(symbol)
                 self.on_paste_objects(pos)
@@ -770,166 +757,18 @@ class Controller(object):
         linenr = 0
         for item in memo:
             linenr += 1
-            m1 = re.search('(^eras|^comp|^char|^rect|^line|^magl|^dirl|^arrw):(\d+),(\d+),(\d+),?(\d*),?(\d*),?(\d*)', item)  # noqa W605
-            m2 = re.search('(^d|^i)(row|col):(\d+)', item)  # noqa W605
-            m3 = re.search('(^text):(\d+),(\d+),(\d+),(.*)', item)  # noqa W605
+            if item.startswith(COMPONENT + ':'):
+                skipped += play_component(item)
+                continue
+            m1 = re.search(r'(^eras|^char|^rect|^line|^magl|^dirl|^arrw):(\d+),(\d+),(\d+),?(\d*),?(\d*),?(\d*)', item)
+            m2 = re.search(r'(^d|^i)(row|col):(\d+)', item)
+            m3 = re.search(r'(^text):(\d+),(\d+),(\d+),(.*)', item)
             if m1 is not None:
                 skipped += play_m1(m1)
             elif m2 is not None:
                 skipped += play_m2(m2)
             elif m3 is not None:
                 skipped += play_m3(m3)
-            else:
-                msg = _("skipped linenr: {}").format(linenr)
-                pub.sendMessage('STATUS_MESSAGE', msg=msg, type=WARNING)
-                skipped += 1
-        return skipped
-
-    def play_memo_original_aac(self, memo):
-
-        def play_m1(m):
-            skip = 0
-            component = m.group(1)
-            type = component.lower()
-            if type == ERASER:
-                w = int(m.group(2))
-                h = int(m.group(3))
-                size = (w, h)
-                x, y = m.group(4, 5)
-                pos = Pos(x, y)
-                symbol = Eraser(size)
-                self.selected_objects = []
-                self.add_selected_object(symbol)
-                self.on_paste_objects(pos)
-
-            elif type == COMPONENT:
-                id = int(m.group(2))
-                orientation = int(m.group(3))
-                mirrored = int(m.group(4))
-                x, y = m.group(5, 6)
-                pos = Pos(x, y)
-                symbol = self.complib.get_symbol_byid(id)
-                symbol.ori = orientation
-                symbol.mirrored = mirrored
-                self.selected_objects = []
-                self.add_selected_object(symbol)
-                self.on_paste_objects(pos)
-
-            elif type == CHARACTER:
-                ascii = m.group(2)
-                char = chr(int(ascii))
-                x, y = m.group(3, 4)
-                pos = Pos(x, y)
-                symbol = Character(char)
-                self.selected_objects = []
-                self.add_selected_object(symbol)
-                self.on_paste_objects(pos)
-
-            elif type == LINE:
-                terminal = int(m.group(2))
-                x, y = m.group(3, 4)
-                startpos = Pos(x, y)
-                x, y = m.group(5, 6)
-                endpos = Pos(x, y)
-                self.on_paste_line(startpos, endpos, terminal)
-
-            elif type == DIR_LINE:
-                x, y = m.group(2, 3)
-                startpos = Pos(x, y)
-                x, y = m.group(4, 5)
-                endpos = Pos(x, y)
-                self.on_paste_dir_line(startpos, endpos)
-
-            elif type == MAG_LINE:
-                line_type = int(m.group(2))
-
-                x, y = m.group(3, 4)
-                startpos = Pos(x, y)
-                x, y = m.group(5, 6)
-                endpos = Pos(x, y)
-                self.on_paste_mag_line_w_type(startpos, endpos, line_type)
-
-            elif type == DRAW_RECT:
-                x, y = m.group(3, 4)
-                startpos = Pos(x, y)
-                x, y = m.group(5, 6)
-                endpos = Pos(x, y)
-                self.on_paste_rect(startpos, endpos)
-            else:
-                msg = _("skipped: {}").format(type)
-                pub.sendMessage('STATUS_MESSAGE', msg=msg, type=WARNING)
-                skip = 1
-            return skip
-
-        def play_m2(m):
-            type = m.group(1)
-            if type == 'I':
-                action = INSERT
-            else:
-                action = REMOVE
-            what = m.group(2)
-            nr = int(m.group(3))
-            if what.lower() == COL:
-                symbol = Column(nr, action)
-            elif what.lower() == ROW:
-                symbol = Row(nr, action)
-            self.selected_objects = []
-            self.add_selected_object(symbol)
-            self.on_paste_objects(symbol.startpos)
-            return 0
-
-        def play_m3(m):
-            skip = 0
-            type = m.group(1)
-            if type == TEXT:
-                text = m.group(2)
-                x, y = m.group(3, 4)
-                pos = Pos(x, y)
-                orientation = 0
-                symbol = Text(pos, text, orientation)
-                self.selected_objects = []
-                self.add_selected_object(symbol)
-                self.on_paste_objects(pos)
-            else:
-                msg = _("skipped: {}").format(type)
-                pub.sendMessage('STATUS_MESSAGE', msg=msg, type=WARNING)
-                skip = 1
-            return skip
-
-        def play_m4(m):
-            id = int(m.group(2))
-            orientation = int(m.group(3))
-            orientation -= 1
-            x, y = m.group(4, 5)
-            pos = Pos(x, y)
-            if m.group(6) == 's':
-                mirrored = 1
-            else:
-                mirrored = 0
-            symbol = self.complib.get_symbol_byid(id)
-            symbol.ori = orientation
-            symbol.mirrored = mirrored
-            self.selected_objects = []
-            self.add_selected_object(symbol)
-            self.on_paste_objects(pos)
-            return 0
-
-        skipped = 0
-        linenr = 0
-        for item in memo:
-            linenr += 1
-            m1 = re.search('(^eras|^char|^rect|^line|^MagL|^dirl):(\d+),(\d+),(\d+),?(\d*),?(\d*),?(\d*)', item)  # noqa W605
-            m2 = re.search('(^D|^I)(ROW|COL):(\d+)', item)  # noqa W605
-            m3 = re.search('(^text):(.+),(\d+),(\d+)', item)  # noqa W605
-            m4 = re.search('(^comp):(\d+),(\d+),(\d+),(\d+),(\w),?(\w*)', item)  # noqa W605
-            if m1 is not None:
-                skipped += play_m1(m1)
-            elif m2 is not None:
-                skipped += play_m2(m2)
-            elif m3 is not None:
-                skipped += play_m3(m3)
-            elif m4 is not None:
-                skipped += play_m4(m4)
             else:
                 msg = _("skipped linenr: {}").format(linenr)
                 pub.sendMessage('STATUS_MESSAGE', msg=msg, type=WARNING)

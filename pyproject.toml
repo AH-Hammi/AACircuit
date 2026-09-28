@@ -6,11 +6,10 @@ authors = [
 ]
 requires-python = ">=3.10"
 dependencies = [
-  "PyGObject",
+  "PySide6",
   "bresenham",
   "platformdirs",
   "pycairo",
-  "pyclip",
   "pypubsub",
 ]
 
@@ -24,4 +23,10 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools]
 packages = [
   "application",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.16.9",
+    "zuban>=0.10.0",
 ]

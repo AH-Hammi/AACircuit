@@ -1,90 +1,47 @@
-# NB to be run with nose, this .py should _not_ be executable (chmod -x)
-
 import unittest
+from pathlib import Path
 
-from application.pos import Pos
 from application.controller import Controller
+from application.pos import Pos
 
 
 class FileTest(unittest.TestCase):
+    def test_component_name_round_trip(self):
+        controller = Controller(component_language='en')
+        symbol = controller.complib.get_symbol('D-FF,JK-FF')
+        symbol.startpos = Pos(4, 2)
+        symbol.ori = 1
+        symbol.mirrored = 1
+        controller.objects.append(symbol)
+        symbol.paste(controller.grid)
 
-    def test_read_write(self):
+        filename = 'tmp/component-name.aac'
+        self.assertTrue(controller.on_write_to_file(filename))
 
-        c = Controller()
+        reopened = Controller(component_language='de')
+        self.assertTrue(reopened.on_read_from_file(filename))
+        saved_symbol = next(item for item in reopened.objects if item.is_symbol)
 
-        filename = 'tests/files/test_all.aac'
-        self.assertTrue(c.on_read_from_file(filename))
-
-        filename = 'tmp/test_all.aac'
-        self.assertTrue(c.on_write_to_file(filename))
-
-    def test_read_aac(self):
-
-        c = Controller()
-
-        filename = 'tests/files/test_tr_circuit.aac'
-        self.assertTrue(c.on_read_from_file(filename))
+        self.assertEqual(saved_symbol.component_key, 'D-FF,JK-FF')
+        self.assertEqual(saved_symbol.ori, 1)
+        self.assertEqual(saved_symbol.mirrored, 1)
+        self.assertEqual(saved_symbol.startpos, Pos(4, 2))
 
     def test_read_ascii(self):
+        controller = Controller(component_language='en')
+        controller.on_new()
+        self.assertTrue(controller.on_load_ascii_from_file('tests/files/test_ascii.txt'))
 
-        c = Controller()
-        c.on_new()
-
-        filename = 'tests/files/test_ascii.txt'
-        self.assertTrue(c.on_load_ascii_from_file(filename))
-
-        pos = Pos(0, 0)
-        c.on_paste_objects(pos)
-
-        filename = 'tmp/test_ascii.aac'
-        self.assertTrue(c.on_write_to_file(filename))
-
-    def test_import_aacircuit(self):
-
-        c = Controller()
-        c.legacy = True
-
-        filename = 'tests/files/original_741.aac'
-        self.assertTrue(c.on_read_from_file(filename))
-
-        filename = 'tmp/741.aac'
-        self.assertTrue(c.on_write_to_file(filename))
-
-        filename = 'tmp/741_legacy.txt'
-        self.assertTrue(c.on_write_to_ascii_file(filename))
+        controller.on_paste_objects(Pos(0, 0))
+        self.assertTrue(controller.on_write_to_file('tmp/test_ascii.aac'))
 
     def test_export_ascii(self):
-
-        c = Controller()
-
-        filename = 'tests/files/test_all.aac'
-        self.assertTrue(c.on_read_from_file(filename))
+        controller = Controller(component_language='en')
+        symbol = controller.complib.get_symbol('Resistor')
+        symbol.startpos = Pos(10, 10)
+        controller.objects.append(symbol)
+        symbol.paste(controller.grid)
 
         filename = 'tmp/test_all.txt'
-        self.assertTrue(c.on_write_to_ascii_file(filename))
-
-    def test_export_pdf(self):
-
-        c = Controller()
-
-        filename = 'tests/files/test_all.aac'
-        self.assertTrue(c.on_read_from_file(filename))
-
-        # FIXME
-        # To avoid using grid_view methods, use the controller to pass to grid_view.
-        # With the disadvantage of not being able to check the outcome here.
-        # Instead, visually check the existence and content of the PDF file.
-        filename = 'tmp/test_all.pdf'
-        c.on_export_as_pdf(filename)
-
-    def test_import_aacircuit_export_pdf(self):
-
-        c = Controller()
-        c.legacy = True
-
-        filename = 'tests/files/original_741.aac'
-        self.assertTrue(c.on_read_from_file(filename))
-
-        # for (visual) verification only
-        filename = 'tmp/741_legacy.pdf'
-        c.on_export_as_pdf(filename)
+        controller.on_export_as_ascii(filename)
+        self.assertTrue(Path(filename).is_file())

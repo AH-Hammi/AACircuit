@@ -1,19 +1,17 @@
 import os
 import unittest
 
-# from flake8.engine import get_style_guide
-# flake8.api.legacy.get_style_guide(**kwargs)
-# http://flake8.pycqa.org/en/latest/user/python-api.html
-
-# import flake8.api.legacy
-# def get_style_guide(*args, **kwargs):
-#     return flake8.api.legacy.get_style_guide(*args, **kwargs)
-
-from flake8.api import legacy as flake8
-
 # disbale the flake8 logger:
 # http://flake8.pycqa.org/en/latest/user/python-api.html
 from logging import getLogger
+
+# from flake8.engine import get_style_guide
+# flake8.api.legacy.get_style_guide(**kwargs)
+# http://flake8.pycqa.org/en/latest/user/python-api.html
+# import flake8.api.legacy
+# def get_style_guide(*args, **kwargs):
+#     return flake8.api.legacy.get_style_guide(*args, **kwargs)
+from flake8.api import legacy as flake8
 
 getLogger('flake8').propagate = False
 
@@ -30,7 +28,7 @@ style_guide = flake8.get_style_guide(
         # 'F405',  # ... may be undefined, or defined from star imports: ...
     ),
     report=None,
-    exclude=[]
+    exclude=['.venv', 'tmp']
 )
 
 

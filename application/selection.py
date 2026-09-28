@@ -3,15 +3,27 @@ AACircuit
 2020-03-02 JvO
 """
 
-from application import INSERT
-from application import HORIZONTAL, VERTICAL
-from application.preferences import Preferences
-from application import IDLE, SELECTING, SELECTED, DRAG
-from application import OBJECT, TEXT, TEXT_BLOCK, COL, ROW, RECT, ERASER
+from application import (
+    COL,
+    DRAG,
+    ERASER,
+    HORIZONTAL,
+    IDLE,
+    INSERT,
+    OBJECT,
+    RECT,
+    ROW,
+    SELECTED,
+    SELECTING,
+    TEXT,
+    TEXT_BLOCK,
+    VERTICAL,
+)
 from application.pos import Pos
+from application.preferences import Preferences
 
 
-class Selection(object):
+class Selection:
     """
     A selection on the grid (canvas).
     All positions are canvas (x,y) coordinates.
@@ -83,7 +95,7 @@ class Selection(object):
 class SelectionRect(Selection):
 
     def __init__(self, item=RECT, state=IDLE):
-        super(SelectionRect, self).__init__(item=item, state=state)
+        super().__init__(item=item, state=state)
 
     def set_position(self, ctx):
         x_start, y_start = self._startpos.xy
@@ -100,7 +112,7 @@ class SelectionRect(Selection):
 class SelectionArrow(Selection):
 
     def __init__(self, item=RECT, state=IDLE):
-        super(SelectionArrow, self).__init__(item=item, state=state)
+        super().__init__(item=item, state=state)
 
     def _direction(self):
         dx = abs(self._endpos.x - self._startpos.x)
@@ -175,7 +187,7 @@ class SelectionArrow(Selection):
 class SelectionEraser(SelectionRect):
 
     def __init__(self, item=ERASER):
-        super(SelectionEraser, self).__init__(item=item)
+        super().__init__(item=item)
 
     def draw(self, ctx):
         self.set_position(ctx)
@@ -186,13 +198,13 @@ class SelectionEraser(SelectionRect):
 class SelectionObject(SelectionRect):
 
     def __init__(self, item=OBJECT, state=SELECTING):
-        super(SelectionObject, self).__init__(item=item, state=state)
+        super().__init__(item=item, state=state)
 
 
 class SelectionCol(Selection):
 
     def __init__(self, action, state=SELECTING):
-        super(SelectionCol, self).__init__(item=COL, state=state)
+        super().__init__(item=COL, state=state)
         self._action = action
 
     @property
@@ -220,7 +232,7 @@ class SelectionCol(Selection):
 class SelectionRow(Selection):
 
     def __init__(self, action, state=SELECTING):
-        super(SelectionRow, self).__init__(item=ROW, state=state)
+        super().__init__(item=ROW, state=state)
         self._action = action
 
     @property
@@ -248,7 +260,7 @@ class SelectionRow(Selection):
 class SelectionText(Selection):
 
     def __init__(self, text="", item=TEXT, state=SELECTING):
-        super(SelectionText, self).__init__(item=item, state=state)
+        super().__init__(item=item, state=state)
         self._text = text
 
     @property
@@ -274,4 +286,4 @@ class SelectionText(Selection):
 class SelectionTextBlock(SelectionText):
 
     def __init__(self, text=""):
-        super(SelectionTextBlock, self).__init__(text=text, item=TEXT_BLOCK)
+        super().__init__(text=text, item=TEXT_BLOCK)

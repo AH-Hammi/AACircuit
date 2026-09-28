@@ -2,16 +2,25 @@
 
 import unittest
 
-from application import REMOVE, INSERT
-from application.pos import Pos
+from PySide6.QtWidgets import QApplication, QPushButton
+
+from application import INSERT, REMOVE
 from application.controller import Controller
+from application.pos import Pos
 
 
 class EditingTest(unittest.TestCase):
 
+    def test_copy_grid_button_copies_ascii_to_clipboard(self):
+        c = Controller(component_language='en')
+        c.on_copy_grid()
+
+        self.assertIsNotNone(c.gui.findChild(QPushButton, 'copy_grid_button'))
+        self.assertEqual(QApplication.clipboard().text(), c.grid.content_as_str())
+
     def test_insert_remove(self):
 
-        c = Controller()
+        c = Controller(component_language='en')
         c.on_new()
 
         # NB test should be run against the default (en_US) component library
@@ -32,7 +41,7 @@ class EditingTest(unittest.TestCase):
 
     def test_cols(self):
 
-        c = Controller()
+        c = Controller(component_language='en')
         c.on_new()
 
         grid = c.grid
@@ -63,7 +72,7 @@ class EditingTest(unittest.TestCase):
 
     def test_rows(self):
 
-        c = Controller()
+        c = Controller(component_language='en')
         c.on_new()
         grid = c.grid
 
@@ -93,7 +102,7 @@ class EditingTest(unittest.TestCase):
 
     def test_erase(self):
 
-        c = Controller()
+        c = Controller(component_language='en')
         c.on_new()
 
         # NB test should be run against the default (en_US) component library
@@ -108,7 +117,7 @@ class EditingTest(unittest.TestCase):
 
     def test_duplicate(self):
 
-        c = Controller()
+        c = Controller(component_language='en')
         c.on_new()
 
         # NB test should be run against the default (en_US) component library

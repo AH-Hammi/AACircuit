@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 
 """
 AACircuit
@@ -6,10 +5,11 @@ AACircuit
 """
 
 from gettext import gettext as _
-from application import CELL_DEFAULT, CELL_EMPTY, CELL_NEW, CELL_ERASE
+
+from application import CELL_DEFAULT, CELL_EMPTY, CELL_ERASE, CELL_NEW
 
 
-class Grid(object):
+class Grid:
 
     def __init__(self, cols=5, rows=5):
         self._grid = [[CELL_DEFAULT] * cols for i in range(rows)]
@@ -17,7 +17,7 @@ class Grid(object):
     def __str__(self):
         str = _("number of rows: {0} columns: {1}\n").format(self.nr_rows, self.nr_cols)
         for r in self._grid:
-            str += "{0}\n".format(r)
+            str += f"{r}\n"
         return str
 
     @property
@@ -100,8 +100,7 @@ class Grid(object):
         content = []
         c_start, r_start, c_end, r_end = self.rect_to_rc(rect)
         # truncate
-        if r_end >= self.nr_rows:
-            r_end = self.nr_rows
+        r_end = min(self.nr_rows, r_end)
         if c_end >= self.nr_cols:
             r_end = self.nr_cols
         # TODO Padd content?
@@ -119,8 +118,7 @@ class Grid(object):
         c_start, r_start, c_end, r_end = self.rect_to_rc(rect)
 
         # truncate
-        if r_end >= self.nr_rows:
-            r_end = self.nr_rows
+        r_end = min(self.nr_rows, r_end)
         if c_end >= self.nr_cols:
             r_end = self.nr_cols
 

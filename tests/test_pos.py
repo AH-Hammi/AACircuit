@@ -40,41 +40,41 @@ class PosTest(unittest.TestCase):
         b = Pos(12, 21)
 
         tmp = a.grid_cr()
-        self.assertEquals(tmp.x, 1)
-        self.assertEquals(tmp.y, 0)
+        self.assertEqual(tmp.x, 1)
+        self.assertEqual(tmp.y, 0)
 
         tmp = a.view_xy()
-        self.assertEquals(tmp.x, 100)
-        self.assertEquals(tmp.y, 240)
+        self.assertEqual(tmp.x, 100)
+        self.assertEqual(tmp.y, 240)
 
         a.snap_to_grid()
-        self.assertEquals(a.x, 10)
-        self.assertEquals(a.y, 0)
+        self.assertEqual(a.x, 10)
+        self.assertEqual(a.y, 0)
 
         b = Pos(10, 16)
 
         tmp = b.grid_cr()
-        self.assertEquals(tmp.x, 1)
-        self.assertEquals(tmp.y, 1)
+        self.assertEqual(tmp.x, 1)
+        self.assertEqual(tmp.y, 1)
 
         tmp = b.view_xy()
-        self.assertEquals(tmp.x, 100)
-        self.assertEquals(tmp.y, 256)
+        self.assertEqual(tmp.x, 100)
+        self.assertEqual(tmp.y, 256)
 
         b.snap_to_grid()
-        self.assertEquals(b.x, 10)
-        self.assertEquals(b.y, 16)
+        self.assertEqual(b.x, 10)
+        self.assertEqual(b.y, 16)
 
         c = Pos(11, 17)
 
         tmp = c.grid_cr()
-        self.assertEquals(tmp.x, 1)
-        self.assertEquals(tmp.y, 1)
+        self.assertEqual(tmp.x, 1)
+        self.assertEqual(tmp.y, 1)
 
         tmp = c.view_xy()
-        self.assertEquals(tmp.x, 110)
-        self.assertEquals(tmp.y, 272)
+        self.assertEqual(tmp.x, 110)
+        self.assertEqual(tmp.y, 272)
 
         c.snap_to_grid()
-        self.assertEquals(c.x, 10)
-        self.assertEquals(c.y, 16)
+        self.assertEqual(c.x, 10)
+        self.assertEqual(c.y, 16)

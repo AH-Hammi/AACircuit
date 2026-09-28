@@ -1,139 +1,256 @@
-"""
-AACircuit
-2020-03-02 JvO
-"""
+"""Main AACircuit window implemented with PySide6."""
 
+import os
 import sys
 import time
+
 from pubsub import pub
-from threading import Timer
+from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtWidgets import (
+    QApplication,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMainWindow,
+    QMessageBox,
+    QPushButton,
+    QScrollArea,
+    QVBoxLayout,
+    QWidget,
+)
 
-import gettext
-
-from application import get_path_to_data
-from application import ERROR, INFO
-from application import INSERT, REMOVE
-from application.symbol import Line
-from application.grid_view import GridView
+from application import ERROR, INFO, INSERT, REMOVE
+from application import gettext as _
 from application.component_view import ComponentView
-from application.preferences import Preferences, PreferencesDialog
+from application.grid_view import GridView
 from application.magic_line_settings import MagicLineSettingsDialog
+from application.preferences import PreferencesDialog
+from application.symbol import Line
 
-import gi
-gi.require_version('Gtk', '3.0')
-from gi.repository import Gtk, Gdk  # noqa: E402
-from gi.repository import GdkPixbuf  # noqa: E402
+_qt_app = None
 
 
-class MainWindow(Gtk.Window):
-    __gtype_name__ = 'MainWindow'
+def ensure_qapplication():
+    global _qt_app
+    app = QApplication.instance()
+    if app is None:
+        if os.name != 'nt' and not os.environ.get('DISPLAY'):
+            os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
+        _qt_app = QApplication(sys.argv[:1])
+        app = _qt_app
+    return app
 
-    def __new__(cls):
-        """
-        This method creates and binds the builder window to the class.
-        In order for this to work correctly, the class of the main
-        window in the Glade UI file must be the same as the name of
-        this class.
 
-        https://eeperry.wordpress.com/2013/01/05/pygtk-new-style-python-class-using-builder/
-        """
-        try:
-            gettext.bindtextdomain('aacircuit', get_path_to_data('locale/'))
-            gettext.textdomain('aacircuit')
-
-            builder = Gtk.Builder()
-            # https://stackoverflow.com/questions/24320502/how-to-translate-pygtk-glade-gtk-builder-application
-            builder.set_translation_domain('aacircuit')
-            builder.add_from_file(get_path_to_data('aacircuit.glade'))
-
-        except IOError:
-            _ = gettext.gettext
-            print(_("Failed to load XML GUI file aacircuit.glade"))
-            sys.exit(1)
-
-        new_object = builder.get_object('main_window')
-        new_object.finish_initializing(builder)
-
-        return new_object
-
-    def finish_initializing(self, builder):
-        """
-        Treat this as the __init__() method.
-        Arguments pass in must be passed from __new__().
-        """
-        self.builder = builder
-        self.set_default_size(640, 700)
-
-        # Add any other initialization here
-
-        # https://stackoverflow.com/questions/14983385/why-css-style-dont-work-on-gtkbutton
-        css_provider = Gtk.CssProvider()
-
-        # https://stackoverflow.com/questions/16740949/gtk-cssprovider-how-do-id-based-selectors-work-in-gtk3
-        css_provider.load_from_path(get_path_to_data('style.css'))
-
-        screen = Gdk.Screen.get_default()
-        style_context = Gtk.StyleContext()
-        style_context.add_provider_for_screen(screen, css_provider,
-                                              Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-
-        # statusbar
-        self.timer_is_running = False
-        self.label_xpos = self.builder.get_object('x_pos')
-        self.label_ypos = self.builder.get_object('y_pos')
-        self.label_orientation = self.builder.get_object('symbol_orientation')
-        self.msg = self.builder.get_object('statusbar1')
-
-        # the GUI signals are handled by this class
-        # NB change signals (in Glade) when changing (handler) method names
-        self.builder.connect_signals(self)
-
-        # cursor buttons
-        self.btn_cur = [
-            self.builder.get_object('cursor1'),
-            self.builder.get_object('cursor2'),
-            self.builder.get_object('cursor3'),
-            self.builder.get_object('cursor4')]
-
-        self.text_entry = self.builder.get_object('text_entry')
-
-        # file menu
-        self.menu_save = builder.get_object('save_file')
-        self.menu_save.set_sensitive(False)
-
-        # edit menu
-        self.menu_copy = builder.get_object('copy')
-        self.menu_cut = builder.get_object('cut')
-        self.menu_paste = builder.get_object('paste')
-        self.menu_undo = builder.get_object('undo')
-        self.menu_redo = builder.get_object('redo')
-        self.menu_copy.set_sensitive(False)
-        self.menu_cut.set_sensitive(False)
-        self.menu_paste.set_sensitive(False)
-        self.menu_undo.set_sensitive(False)
-        self.menu_redo.set_sensitive(False)
-
-        # symbol menu
-        self.menu_rotate = builder.get_object('rotate_symbol')
-        self.menu_mirror = builder.get_object('mirror_symbol')
-        self.menu_rotate.set_sensitive(False)
-        self.menu_mirror.set_sensitive(False)
-
-        self.connect('delete_event', self.on_delete_window)
-        self.connect('destroy', lambda w: Gtk.main_quit())
-
+class MainWindow(QMainWindow):
+    def __init__(self):
+        ensure_qapplication()
+        super().__init__()
+        self.setWindowTitle(_("AACircuit"))
+        self.resize(1200, 700)
         self._last_msg_type = None
-        self._last_msg_id = None
         self._start_time = time.time()
-
-        self.init_grid()
-        self.init_cursors()
-        self.init_components()
-        self.init_char_buttons()
-
-        # self.start_timer()
-
         self._undo_stack_empty = True
+
+        self._build_menus()
+        self._build_central_widget()
+        self._subscribe()
+
+    def _build_menus(self):
+        file_menu = self.menuBar().addMenu(_("&File"))
+        self.menu_new = self._action(file_menu, _("New"), 'NEW_FILE', 'Ctrl+N')
+        self.menu_open = self._action(file_menu, _("Open…"), 'OPEN_FILE', 'Ctrl+O')
+        self.menu_save = self._action(file_menu, _("Save"), 'SAVE_FILE', 'Ctrl+S')
+        self.menu_save_as = self._action(file_menu, _("Save as…"), 'SAVE_AS_FILE', 'Ctrl+Shift+S')
+        self.menu_save.setEnabled(False)
+        file_menu.addSeparator()
+        self._action(file_menu, _("Export as ASCII…"), 'EXPORT_AS_ASCII')
+        file_menu.addSeparator()
+        quit_action = file_menu.addAction(_("Quit"))
+        quit_action.setShortcut(QKeySequence.StandardKey.Quit)
+        quit_action.triggered.connect(self.close)
+
+        edit_menu = self.menuBar().addMenu(_("&Edit"))
+        self.menu_cut = edit_menu.addAction(_("Cut"))
+        self.menu_cut.setShortcut(QKeySequence.StandardKey.Cut)
+        self.menu_cut.triggered.connect(lambda: self._send_selection_event('CUT'))
+        self.menu_copy = edit_menu.addAction(_("Copy selection"))
+        self.menu_copy.setShortcut(QKeySequence.StandardKey.Copy)
+        self.menu_copy.triggered.connect(lambda: self._send_selection_event('COPY'))
+        self.menu_paste = edit_menu.addAction(_("Paste grid from clipboard"))
+        self.menu_paste.setShortcut(QKeySequence.StandardKey.Paste)
+        self.menu_paste.triggered.connect(lambda: pub.sendMessage('PASTE_GRID'))
+        edit_menu.addSeparator()
+        self.menu_undo = self._action(edit_menu, _("Undo"), 'UNDO', 'Ctrl+Z')
+        self.menu_redo = self._action(edit_menu, _("Redo"), 'REDO', 'Ctrl+Shift+Z')
+        self.menu_undo.setEnabled(False)
+        self.menu_redo.setEnabled(False)
+        edit_menu.addSeparator()
+        self._action(edit_menu, _("Copy grid"), 'COPY_GRID')
+        self._action(edit_menu, _("Paste grid"), 'PASTE_GRID')
+        self._action(edit_menu, _("Load and paste ASCII…"), 'LOAD_AND_PASTE_GRID')
+        edit_menu.addSeparator()
+        self._action(edit_menu, _("Edit draw commands…"), 'EDIT_MEMO')
+
+        view_menu = self.menuBar().addMenu(_("&View"))
+        size_menu = view_menu.addMenu(_("Grid size"))
+        for index, (cols, rows) in enumerate(((72, 36), (72, 49), (100, 49), (200, 70)), 1):
+            action = size_menu.addAction(_("{} × {} cells").format(cols, rows))
+            action.triggered.connect(
+                lambda _checked=False, c=cols, r=rows: pub.sendMessage('GRID_SIZE', cols=c, rows=r)
+            )
+        self._action(view_menu, _("Redraw schema"), 'REDRAW_GRID', 'F5')
+        view_menu.addSeparator()
+        self.pickpoint_actions = []
+        for label, event in (
+            (_("Symbol pickpoints"), 'SHOW_SYMBOL_PICKPOINTS'),
+            (_("Line pickpoints"), 'SHOW_LINE_PICKPOINTS'),
+            (_("Text pickpoints"), 'SHOW_TEXT_PICKPOINTS'),
+        ):
+            action = view_menu.addAction(label)
+            action.setCheckable(True)
+            action.setChecked(True)
+            action.toggled.connect(lambda checked, name=event: pub.sendMessage(name, state=checked))
+            self.pickpoint_actions.append(action)
+
+        symbol_menu = self.menuBar().addMenu(_("&Symbol"))
+        self.menu_rotate = self._action(symbol_menu, _("Rotate 90° clockwise"), 'ROTATE_SYMBOL')
+        self.menu_mirror = self._action(symbol_menu, _("Mirror vertically"), 'MIRROR_SYMBOL')
+        self.menu_rotate.setEnabled(False)
+        self.menu_mirror.setEnabled(False)
+
+        app_menu = self.menuBar().addMenu(_("AACircuit"))
+        self._action(app_menu, _("About AACircuit"), 'ABOUT')
+        app_menu.addSeparator()
+        self._action(app_menu, _("Preferences…"), 'PREFERENCES', 'Ctrl+,')
+        self._action(app_menu, _("Magic-line settings…"), 'MAGIC_LINE_SETTINGS')
+
+    def _action(self, menu, text, event, shortcut=None):
+        action = QAction(text, self)
+        if shortcut:
+            action.setShortcut(QKeySequence(shortcut))
+        action.triggered.connect(lambda _checked=False, name=event: self._dispatch(name))
+        menu.addAction(action)
+        return action
+
+    def _dispatch(self, event):
+        handlers = {
+            'ABOUT': self.show_about,
+            'PREFERENCES': self.show_preferences,
+            'MAGIC_LINE_SETTINGS': self.show_magic_line_settings,
+        }
+        handler = handlers.get(event)
+        if handler is not None:
+            handler()
+        else:
+            pub.sendMessage(event)
+
+    def _build_central_widget(self):
+        central = QWidget(self)
+        layout = QVBoxLayout(central)
+        layout.setContentsMargins(4, 4, 4, 4)
+
+        char_row = QHBoxLayout()
+        for char in ('+', 'o', '#', '/', '\\', '|', '-', '(', ')', "'", '.'):
+            button = QPushButton(char, central)
+            button.setFixedWidth(32)
+            button.clicked.connect(lambda _checked=False, value=char: pub.sendMessage('CHARACTER_CHANGED', char=value))
+            char_row.addWidget(button)
+        space_button = QPushButton(_("Space"), central)
+        space_button.clicked.connect(lambda: pub.sendMessage('ERASER', size=(1, 1)))
+        char_row.addWidget(space_button)
+        copy_grid_button = QPushButton(_("Copy grid"), central)
+        copy_grid_button.setObjectName('copy_grid_button')
+        copy_grid_button.setToolTip(_("Copy the ASCII drawing to the clipboard"))
+        copy_grid_button.clicked.connect(lambda: pub.sendMessage('COPY_GRID'))
+        char_row.addWidget(copy_grid_button)
+        char_row.addWidget(QLabel(_("Text:"), central))
+        self.text_entry = QLineEdit(central)
+        self.text_entry.setMaximumWidth(240)
+        char_row.addWidget(self.text_entry)
+        add_text_button = QPushButton(_("Insert text"), central)
+        add_text_button.clicked.connect(lambda: pub.sendMessage('ADD_TEXT'))
+        char_row.addWidget(add_text_button)
+        add_textblock_button = QPushButton(_("Insert text line"), central)
+        add_textblock_button.clicked.connect(
+            lambda: pub.sendMessage('ADD_TEXTBLOCK', text=self.text_entry.text())
+        )
+        char_row.addWidget(add_textblock_button)
+        char_row.addStretch(1)
+        layout.addLayout(char_row)
+
+        body = QHBoxLayout()
+        tools = QVBoxLayout()
+        self._add_tool_button(tools, _("Select object"), lambda: pub.sendMessage('SELECT_OBJECT'))
+        self._add_tool_button(tools, _("Select rectangle"), lambda: pub.sendMessage('SELECT_RECT'))
+        self._add_tool_button(tools, _("Eraser"), lambda: pub.sendMessage('SELECTING_ERASER'))
+        tools.addWidget(self._separator())
+        self._add_tool_button(tools, _("Rotate"), lambda: pub.sendMessage('ROTATE_SYMBOL'))
+        self._add_tool_button(tools, _("Mirror"), lambda: pub.sendMessage('MIRROR_SYMBOL'))
+        tools.addWidget(self._separator())
+        for index, title in enumerate((_("Free line"), _("Line"), _("Line with o terminals"), _("Line with + terminals"), _("Line with terminals")), 0):
+            button = QPushButton(title, central)
+            button.clicked.connect(lambda _checked=False, nr=index: self.on_line(nr))
+            tools.addWidget(button)
+        self._add_tool_button(tools, _("Automatic line"), lambda: pub.sendMessage('DRAW_MAG_LINE'))
+        self._add_tool_button(tools, _("Rectangle"), lambda: pub.sendMessage('DRAW_RECT'))
+        self._add_tool_button(tools, _("Arrow"), lambda: pub.sendMessage('DRAW_ARROW'))
+        tools.addWidget(self._separator())
+        self._add_tool_button(tools, _("Insert row"), lambda: self._selecting_row('insert_row'))
+        self._add_tool_button(tools, _("Insert column"), lambda: self._selecting_col('insert_col'))
+        self._add_tool_button(tools, _("Remove row"), lambda: self._selecting_row('remove_row'))
+        self._add_tool_button(tools, _("Remove column"), lambda: self._selecting_col('remove_col'))
+        self._add_tool_button(tools, _("Edit draw commands"), lambda: pub.sendMessage('EDIT_MEMO'))
+        tools.addStretch(1)
+        body.addLayout(tools)
+
+        self.grid_view = GridView()
+        self.grid_view.setObjectName('grid_view')
+        self.grid_scroll = QScrollArea(central)
+        self.grid_scroll.setWidgetResizable(False)
+        self.grid_scroll.setWidget(self.grid_view)
+        body.addWidget(self.grid_scroll, 1)
+
+        self.component_view = ComponentView(central)
+        self.component_view.setObjectName('component_list')
+        body.addWidget(self.component_view)
+        layout.addLayout(body, 1)
+
+        status = QWidget(central)
+        status_layout = QHBoxLayout(status)
+        status_layout.setContentsMargins(2, 0, 2, 0)
+        status_layout.addWidget(QLabel(_("x"), status))
+        self.label_xpos = QLineEdit(status)
+        self.label_xpos.setReadOnly(True)
+        self.label_xpos.setMaximumWidth(55)
+        status_layout.addWidget(self.label_xpos)
+        status_layout.addWidget(QLabel(_("y"), status))
+        self.label_ypos = QLineEdit(status)
+        self.label_ypos.setReadOnly(True)
+        self.label_ypos.setMaximumWidth(55)
+        status_layout.addWidget(self.label_ypos)
+        self.label_orientation = QLabel(_("Orientation"), status)
+        self.label_orientation.setMinimumWidth(90)
+        status_layout.addWidget(self.label_orientation)
+        self.msg = QLabel(status)
+        status_layout.addWidget(self.msg, 1)
+        layout.addWidget(status)
+        self.setCentralWidget(central)
+
+    @staticmethod
+    def _separator():
+        line = QWidget()
+        line.setFixedHeight(1)
+        line.setStyleSheet('background-color: palette(mid);')
+        return line
+
+    @staticmethod
+    def _add_tool_button(layout, text, callback):
+        button = QPushButton(text)
+        button.clicked.connect(callback)
+        layout.addWidget(button)
+        return button
+
+    def _subscribe(self):
         pub.subscribe(self.on_pointer_moved, 'POINTER_MOVED')
         pub.subscribe(self.on_message, 'STATUS_MESSAGE')
         pub.subscribe(self.on_orientation_changed, 'ORIENTATION_CHANGED')
@@ -145,302 +262,103 @@ class MainWindow(Gtk.Window):
         pub.subscribe(self.on_undo_changed, 'UNDO_CHANGED')
         pub.subscribe(self.on_redo_changed, 'REDO_CHANGED')
 
-    def start_timer(self):
-        # FIXME Timer interferes with test (lock.acquire() in shutdown)
-        if not self.timer_is_running:
-            self._timer = Timer(15, self._timer_event)
-            self._timer.start()
-            self.timer_is_running = True
+    def _selection_rect(self):
+        if self.grid_view._drag_startpos is None or self.grid_view._drag_endpos is None:
+            return None
+        return self.grid_view.drag_rect
 
-    def stop_timer(self):
-        self._timer.cancel()
-        self.timer_is_running = False
+    def _send_selection_event(self, event):
+        rect = self._selection_rect()
+        if rect is not None:
+            pub.sendMessage(event, rect=rect)
 
-    def _timer_event(self):
-        """Clear status message."""
-        self.timer_is_running = False
-        self.msg.push(0, '')
-        self.start_timer()
+    def _selecting_row(self, name):
+        pub.sendMessage('NOTHING_SELECTED')
+        pub.sendMessage('SELECTING_ROW', action=INSERT if name == 'insert_row' else REMOVE)
 
-    def init_components(self):
-        component_canvas = ComponentView(self.builder)  # noqa F841
+    def _selecting_col(self, name):
+        pub.sendMessage('NOTHING_SELECTED')
+        pub.sendMessage('SELECTING_COL', action=INSERT if name == 'insert_col' else REMOVE)
 
-    def init_grid(self):
-        fixed = self.builder.get_object('grid_viewport')
-        self.grid_view = GridView()
-        fixed.add(self.grid_view)
-
-    def init_cursors(self):
-        self.cursor = []
-        for i in range(1, 5):
-            self.cursor.append(GdkPixbuf.Pixbuf.new_from_file(get_path_to_data('buttons/c{0}.png'.format(i))))
-
-    def init_char_buttons(self):
-        container = self.builder.get_object('char_table')
-        children = container.get_children()
-        for btn in children:
-            btn.connect('pressed', self.on_char_button_clicked)
+    def on_line(self, index):
+        line_type = {
+            1: Line.LINE1,
+            2: Line.LINE2,
+            3: Line.LINE3,
+            4: Line.LINE4,
+        }.get(index, Line.LINE1)
+        pub.sendMessage(f'DRAW_LINE{index}', type=line_type)
 
     def on_pointer_moved(self, pos):
-        """Update the pointer position in the statusbar."""
-        self.label_xpos.set_text(format(pos.x))
-        self.label_ypos.set_text(format(pos.y))
+        self.label_xpos.setText(str(pos.x))
+        self.label_ypos.setText(str(pos.y))
 
     def on_orientation_changed(self, ori):
-        """Show the Symbol orientation in the statusbar."""
-        self.label_orientation.set_label(ori)
-
-    def on_pickpoints_changed(self, item):
-        name = Gtk.Buildable.get_name(item)
-        state = item.get_active()
-        nr = int(name[-1])
-        if nr == 1:
-            pub.sendMessage('SHOW_SYMBOL_PICKPOINTS', state=state)
-        if nr == 2:
-            pub.sendMessage('SHOW_LINE_PICKPOINTS', state=state)
-        if nr == 3:
-            pub.sendMessage('SHOW_TEXT_PICKPOINTS', state=state)
+        self.label_orientation.setText(ori)
 
     def on_message(self, msg, type=INFO):
-        """
-        Add message to statusbar.
-        Error messages are shown at least x seconds.
-        """
         now = time.time()
-        elapsed = now - self._start_time
-        if self._last_msg_type != ERROR or elapsed > 5:
-            # self.msg.set_css_name('error')
-            self.msg.set_name(type)  # use this name in CSS selector (!)
+        if self._last_msg_type != ERROR or now - self._start_time > 5:
             self._start_time = now
             self._last_msg_type = type
-            id = self.msg.get_context_id(msg)
-            self._last_msg_id = id
-            self.msg.push(id, msg)
-            # TODO show errors with another bg color
-
-    def on_add_text(self, button):
-        pub.sendMessage('ADD_TEXT')
-
-    def on_add_textblock(self, button):
-        text = self.text_entry.get_text()
-        pub.sendMessage('ADD_TEXTBLOCK', text=text)
-
-    def on_rotate(self, button):
-        pub.sendMessage('ROTATE_SYMBOL')
-
-    def on_mirror(self, button):
-        pub.sendMessage('MIRROR_SYMBOL')
-
-    def on_line(self, button):
-        name = Gtk.Buildable.get_name(button)
-        line = int(name[-1])
-        if line == 1:
-            type = Line.LINE1
-        elif line == 2:
-            type = Line.LINE2
-        elif line == 3:
-            type = Line.LINE3
-        elif line == 4:
-            type = Line.LINE4
-        else:
-            type = Line.LINE1
-        # DRAW_LINEx
-        pub.sendMessage(name.upper(), type=type)
-
-    def on_mag_line(self, button):
-        pub.sendMessage('DRAW_MAG_LINE')
-
-    def on_rect(self, button):
-        pub.sendMessage('DRAW_RECT')
-
-    def on_arrow(self, button):
-        pub.sendMessage('DRAW_ARROW')
-
-    def on_cursor_toggled(self, button):
-        if button.get_active():
-            name = Gtk.Buildable.get_name(button)
-            btn = int(name[-1])
-            self.custom_cursor(btn)
-            # disable the other cursor buttons
-            for btn in self.btn_cur:
-                if Gtk.Buildable.get_name(btn) != Gtk.Buildable.get_name(button):
-                    # print("Button: %s" % btn.get_name())
-                    btn.set_active(False)
-
-    def on_char_button_clicked(self, button):
-        char = button.get_label()
-        pub.sendMessage('CHARACTER_CHANGED', char=char)
-
-    def on_delete_window(self, window, event):
-        # self.stop_timer()
-        return not self.on_close_clicked()
-
-    def on_close_clicked(self, item=None):
-        _ = gettext.gettext
-        if self._undo_stack_empty or self.show_confirmation_dlg():
-            print(_("Closing application"))
-            Gtk.main_quit()
-        else:
-            return False
-
-    def show_confirmation_dlg(self):
-        # https://bytes.com/topic/python/answers/873799-how-click-close-window-dont-close-gtk-window
-        builder = Gtk.Builder()
-        builder.add_from_file(get_path_to_data('confirmation_dialog.glade'))
-        builder.connect_signals(self)
-        confirm = builder.get_object('confirm')
-        result = confirm.run()
-        confirm.destroy()
-        if result == Gtk.ResponseType.YES:
-            return True
-        else:
-            return False
-
-    def on_select_rect(self, button):
-        pub.sendMessage('SELECT_RECT')
-
-    def on_select_space(self, button):
-        size = (1, 1)
-        pub.sendMessage('ERASER', size=size)
-
-    def on_selecting_eraser(self, button):
-        pub.sendMessage('SELECTING_ERASER')
-
-    def on_select_object(self, button):
-        pub.sendMessage('SELECT_OBJECT')
-
-    def on_selecting_col(self, button):
-        # https://stackoverflow.com/questions/3489520/python-gtk-widget-name
-        name = Gtk.Buildable.get_name(button)
-        if name == 'insert_col':
-            action = INSERT
-        else:
-            action = REMOVE
-        pub.sendMessage('NOTHING_SELECTED')
-        pub.sendMessage('SELECTING_COL', action=action)
-
-    def on_selecting_row(self, button):
-        name = Gtk.Buildable.get_name(button)
-        if name == 'insert_row':
-            action = INSERT
-        else:
-            action = REMOVE
-        pub.sendMessage('NOTHING_SELECTED')
-        pub.sendMessage('SELECTING_ROW', action=action)
-
-    def on_copy_grid(self, item):
-        pub.sendMessage('COPY_GRID')
-
-    def on_paste_grid(self, item):
-        pub.sendMessage('PASTE_GRID')
-
-    def on_load_and_paste_grid(self, item):
-        pub.sendMessage('LOAD_AND_PASTE_GRID')
-
-    def custom_cursor(self, btn):
-        display = self.get_root_window().get_display()
-        pb = self.cursor[btn - 1]
-        # the cursor hot-spot is at the center of the (16x16) cursor image
-        cursor = Gdk.Cursor.new_from_pixbuf(display, pb, 8, 8)
-        self.grid_view.get_window().set_cursor(cursor)
-
-    # MENU handling
-
-    def on_menu_file(self, item):
-        name = Gtk.Buildable.get_name(item).upper()
-        pub.sendMessage(name)
+            self.msg.setText(msg)
+            color = '#a00000' if type == ERROR else '#805000' if type == 'warning' else ''
+            self.msg.setStyleSheet(f'color: {color};' if color else '')
 
     def on_file_opened(self):
-        # enable File menu 'save' when a file has been opened
-        self.menu_save.set_sensitive(True)
+        self.menu_save.setEnabled(True)
 
     def on_new_file(self):
-        self.menu_save.set_sensitive(False)
-
-    def on_menu_edit(self, item):
-        # cut|copy|paste
-        name = Gtk.Buildable.get_name(item)
-        # get the rectangle (ul and br have been set in drag begin/end)
-        ul, br = self.grid_view.drag_rect
-        pub.sendMessage(name.upper(), rect=(ul, br))
-
-    def on_menu_symbol(self, item):
-        name = Gtk.Buildable.get_name(item)
-        pub.sendMessage(name.upper())
-
-    def on_menu_about(self, item):
-        builder = Gtk.Builder()
-        builder.add_from_file(get_path_to_data('about_dialog.glade'))
-        builder.connect_signals(self)
-        about = builder.get_object('about')
-        about.set_transient_for(self)
-        about.set_modal(True)
-        about.run()
-        about.destroy()
-
-    def on_menu_preferences(self, item):
-        dialog = PreferencesDialog()
-        dialog.set_transient_for(self)
-        dialog.set_modal(True)
-        dialog.run()
-        dialog.destroy()
-
-    def on_menu_magic_line_settings(self, item):
-        dialog = MagicLineSettingsDialog()
-        dialog.set_transient_for(self)
-        dialog.set_modal(True)
-        dialog.run()
-        dialog.destroy()
-
-    def on_menu_edit_memo(self, item):
-        pub.sendMessage('EDIT_MEMO')
-
-    def on_menu_grid_size(self, item):
-        name = Gtk.Buildable.get_name(item)
-        # the grid_size option sequence number
-        nr = int(name[-1])
-        if nr == 1:
-            cols, rows = (72, 36)
-        elif nr == 2:
-            cols, rows = (72, 49)
-        elif nr == 3:
-            cols, rows = (100, 49)
-        elif nr == 4:
-            cols, rows = (200, 70)
-        else:
-            # default, catch all
-            cols, rows = (Preferences.values['DEFAULT_COLS'], Preferences.values['DEFAULT_ROWS'])
-        # strip the sequence nr
-        name = name[:-2]
-        pub.sendMessage(name.upper(), cols=cols, rows=rows)
-
-    def on_redraw_grid(self, item):
-        pub.sendMessage('REDRAW_GRID')
+        self.menu_save.setEnabled(False)
 
     def on_nothing_selected(self):
-        self.on_selection_changed()
-        self.menu_rotate.set_sensitive(False)
-        self.menu_mirror.set_sensitive(False)
+        self.on_selection_changed(selected=False)
+        self.menu_rotate.setEnabled(False)
+        self.menu_mirror.setEnabled(False)
 
     def on_symbol_selected(self, symbol):
-        # enable the Symbol menu options only when a symbol has been selected
-        self.menu_rotate.set_sensitive(True)
-        self.menu_mirror.set_sensitive(True)
+        self.menu_rotate.setEnabled(True)
+        self.menu_mirror.setEnabled(True)
 
     def on_selection_changed(self, selected=False):
-        # enable the cut and copy menu only when one or more objects are selected
-        self.menu_copy.set_sensitive(selected)
-        self.menu_cut.set_sensitive(selected)
+        self.menu_copy.setEnabled(selected)
+        self.menu_cut.setEnabled(selected)
 
     def on_undo_changed(self, undo=False):
         self._undo_stack_empty = not undo
-        # enable undo only if the undo-stack is not empty
-        self.menu_undo.set_sensitive(undo)
+        self.menu_undo.setEnabled(undo)
 
     def on_redo_changed(self, redo=False):
-        # enable redo only if the redo-stack is not empty
-        self.menu_redo.set_sensitive(redo)
+        self.menu_redo.setEnabled(redo)
 
-    def on_undo(self, button):
-        name = Gtk.Buildable.get_name(button)
-        pub.sendMessage(name.upper())
+    def show_about(self):
+        QMessageBox.about(
+            self,
+            _("About AACircuit"),
+            _("AACircuit — draw electronic circuits with ASCII characters.\n\n"
+              "A Python version of AACircuit by Andreas Weber."),
+        )
+
+    def show_preferences(self):
+        dialog = PreferencesDialog(self)
+        if dialog.exec():
+            self.grid_view.set_grid_size()
+
+    def show_magic_line_settings(self):
+        MagicLineSettingsDialog(self).exec()
+
+    def closeEvent(self, event):
+        if self._undo_stack_empty or self.show_confirmation_dlg():
+            print(_("Closing application"))
+            event.accept()
+        else:
+            event.ignore()
+
+    def show_confirmation_dlg(self):
+        return QMessageBox.question(
+            self,
+            _("Unsaved changes"),
+            _("Close AACircuit and discard the current changes?"),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        ) == QMessageBox.StandardButton.Yes

@@ -6,18 +6,33 @@ AACircuit
 import copy
 import json
 import re
-from pubsub import pub
-from bresenham import bresenham
-from math import pi, radians, atan
+from math import atan, pi, radians
 
+from bresenham import bresenham
+from pubsub import pub
+
+from application import (
+    ARROW,
+    CELL_ERASE,
+    CHARACTER,
+    COL,
+    COMPONENT,
+    DIR_LINE,
+    DRAW_RECT,
+    ERASER,
+    HORIZONTAL,
+    INSERT,
+    LINE,
+    LONGEST_FIRST,
+    MAG_LINE,
+    ROW,
+    TEXT,
+    VERTICAL,
+)
 from application import gettext as _
-from application.preferences import Preferences
 from application.magic_line_settings import MagicLineSettings
 from application.pos import Pos
-from application import CELL_ERASE
-from application import INSERT, COL, ROW
-from application import HORIZONTAL, VERTICAL, LONGEST_FIRST
-from application import ERASER, COMPONENT, CHARACTER, TEXT, DRAW_RECT, LINE, MAG_LINE, DIR_LINE, ARROW
+from application.preferences import Preferences
 
 
 def show_text(ctx, x, y, text):
@@ -26,14 +41,13 @@ def show_text(ctx, x, y, text):
     y += Preferences.values['FONTSIZE']
     ctx.move_to(x, y)
     ctx.show_text(text)
-    return
 
 
-class Symbol(object):
+class Symbol:
     """
     Symbol represented by a grid.
 
-    :param id: the component id
+    :param component_key: the canonical English component name, if applicable
     :param dict: the character-grid to create the symbol
     :param ori: orientation (0-3)
     :param mirrored: set to 1 to mirror the symbol vertically
@@ -43,13 +57,10 @@ class Symbol(object):
 
     ORIENTATION = {0: "N", 1: "E", 2: "S", 3: "W"}
 
-    def __init__(self, id=0, grid=None, ori=None, mirrored=None, startpos=None, endpos=None):
-        self._id = id
+    def __init__(self, component_key=None, identity=None, grid=None, ori=None, mirrored=None, startpos=None, endpos=None):
+        self._component_key = component_key
+        self._identity = component_key if component_key is not None else identity
         self._has_pickpoint = True
-        if ori is None:
-            self._ori = 0
-        else:
-            self._ori = ori
         if mirrored is None:
             self._mirrored = 0
         else:
@@ -58,6 +69,9 @@ class Symbol(object):
             self._grid = self.default
         else:
             self._grid = grid
+        supported = self._supported_orientation_indexes()
+        requested = 0 if ori is None else ori
+        self._ori = requested if requested in supported else supported[0]
         if startpos is None:
             self._startpos = Pos(0, 0)
         else:
@@ -71,8 +85,16 @@ class Symbol(object):
         self._is_line = False
 
     def __str__(self):
-        str = _("Class: {0} id: {1} ori: {2} startpos: {3}").format(self.__class__.__name__, self._id, self.ORIENTATION[self._ori], self.startpos)
+        str = _("Class: {0} key: {1} ori: {2} startpos: {3}").format(self.__class__.__name__, self._identity, self.ORIENTATION[self._ori], self.startpos)
         return str
+
+    def _supported_orientation_indexes(self):
+        if self._component_key is None:
+            return tuple(self.ORIENTATION)
+        supported = tuple(index for index, direction in self.ORIENTATION.items() if direction in self._grid)
+        if not supported:
+            raise ValueError("Component {!r} has no supported orientations".format(self._component_key))
+        return supported
 
     def _representation(self):
         self._repr = dict()
@@ -129,8 +151,12 @@ class Symbol(object):
         return pos
 
     @property
-    def id(self):
-        return self._id
+    def identity(self):
+        return self._identity
+
+    @property
+    def component_key(self):
+        return self._component_key
 
     @property
     def ori_as_str(self):
@@ -142,8 +168,8 @@ class Symbol(object):
 
     @ori.setter
     def ori(self, value):
-        # orientation can be set as the grid is dynamically selected (in grid() method)
-        if value in (0, 1, 2, 3):
+        # Component orientations are limited to the keys present in its grid.
+        if value in self._supported_orientation_indexes():
             self._ori = value
 
     @property
@@ -192,7 +218,10 @@ class Symbol(object):
 
     def memo(self):
         """Return entry for the actions as recorded in the memo."""
-        str = "{0}:{1},{2},{3},{4}".format(COMPONENT, self._id, self._ori, self._mirrored, self._startpos)
+        component_key = json.dumps(self._component_key, ensure_ascii=False)
+        str = "{0}:{1},{2},{3},{4}".format(
+            COMPONENT, component_key, self._ori, self._mirrored, self._startpos,
+        )
         return str
 
     def copy(self):
@@ -200,22 +229,35 @@ class Symbol(object):
         mirrored = copy.deepcopy(self._mirrored)
         startpos = copy.deepcopy(self._startpos)
         endpos = copy.deepcopy(self._endpos)
-        return Symbol(id=self._id, grid=self._grid, ori=ori, mirrored=mirrored, startpos=startpos, endpos=endpos)
+        return Symbol(
+            component_key=self._component_key,
+            identity=self._identity,
+            grid=self._grid,
+            ori=ori,
+            mirrored=mirrored,
+            startpos=startpos,
+            endpos=endpos,
+        )
 
     @property
     def grid(self):
+        direction = self.ORIENTATION[self._ori]
         try:
-            if self._mirrored == 1:
-                return self.mirror(self._grid[self.ORIENTATION[self._ori]])
-            else:
-                return self._grid[self.ORIENTATION[self._ori]]
+            representation = self._grid[direction]
         except KeyError:
-            return self.default[self.ORIENTATION[0]]
+            if self._component_key is not None:
+                raise
+            representation = self.default[self.ORIENTATION[0]]
+        if self._mirrored == 1:
+            return self.mirror(representation)
+        return representation
 
     def rotate(self):
-        """Return the grid with the next (90 degrees clockwise rotated) orientation for this symbol."""
-        self._ori += 1
-        self._ori %= 4
+        """Rotate clockwise to the next orientation defined for this symbol."""
+        supported = self._supported_orientation_indexes()
+        if len(supported) > 1:
+            current = supported.index(self._ori)
+            self._ori = supported[(current + 1) % len(supported)]
 
         return self.grid
 
@@ -276,7 +318,7 @@ class Eraser(Symbol):
         :param size: the size (in cols, rows) of the grid area to be erased
         :param startpos: the upper-left corner (col,row) coordinate of the area to be erased
         """
-        super(Eraser, self).__init__(grid=None, startpos=startpos)
+        super().__init__(grid=None, startpos=startpos)
         self._size = size
         self._representation()
 
@@ -309,7 +351,7 @@ class Eraser(Symbol):
 
     def memo(self):
         """Return entry for the actions as recorded in the memo."""
-        str = "{0}:{1},{2},{3}".format(ERASER, self._size[0], self._size[1], self._startpos)
+        str = f"{ERASER}:{self._size[0]},{self._size[1]},{self._startpos}"
         return str
 
     def copy(self):
@@ -319,12 +361,12 @@ class Eraser(Symbol):
 class Character(Symbol):
 
     def __init__(self, char, grid=None, startpos=None):
-        id = ord(char)
+        identity = ord(char)
         if grid is None:
             thegrid = {'N': [char]}
         else:
             thegrid = grid
-        super(Character, self).__init__(id=id, grid=thegrid, startpos=startpos)
+        super().__init__(identity=identity, grid=thegrid, startpos=startpos)
         self._char = char
         self._is_symbol = False
         self._is_text = True
@@ -335,7 +377,7 @@ class Character(Symbol):
         return self._grid[self.ORIENTATION[0]]
 
     def memo(self):
-        str = "{0}:{1},{2}".format(CHARACTER, self._id, self._startpos)
+        str = f"{CHARACTER}:{self._identity},{self._startpos}"
         return str
 
     def copy(self):
@@ -351,7 +393,7 @@ class Text(Symbol):
 
     def __init__(self, pos, text, ori=0):
         grid = {"N": ['?']}
-        super(Text, self).__init__(grid=grid, ori=ori, startpos=pos)
+        super().__init__(grid=grid, ori=ori, startpos=pos)
         self._text = text
         self._is_symbol = False
         self._is_text = True
@@ -393,7 +435,7 @@ class Text(Symbol):
 
     def memo(self):
         jstext = json.dumps(self._text)
-        str = "{0}:{1},{2},{3}".format(TEXT, self._ori, self._startpos, jstext)
+        str = f"{TEXT}:{self._ori},{self._startpos},{jstext}"
         return str
 
     def copy(self):
@@ -420,7 +462,7 @@ class Line(Symbol):
 
     def __init__(self, startpos, endpos, type=None):
         grid = {"N": ['?']}
-        super(Line, self).__init__(id=type, grid=grid, startpos=startpos, endpos=endpos)
+        super().__init__(identity=type, grid=grid, startpos=startpos, endpos=endpos)
         if type is None:
             self._type = Line.LINE1
         else:
@@ -497,7 +539,7 @@ class Line(Symbol):
         return Line(startpos, endpos, type)
 
     def memo(self):
-        str = "{0}:{1},{2},{3}".format(LINE, self._type, self._startpos, self._endpos)
+        str = f"{LINE}:{self._type},{self._startpos},{self._endpos}"
         return str
 
     @property
@@ -509,7 +551,7 @@ class DirLine(Line):
     """A straight line from start to end position."""
 
     def __init__(self, startpos, endpos):
-        super(DirLine, self).__init__(startpos=startpos, endpos=endpos)
+        super().__init__(startpos=startpos, endpos=endpos)
         self._representation()
 
     def _representation(self):
@@ -552,7 +594,7 @@ class DirLine(Line):
         return DirLine(startpos, endpos)
 
     def memo(self):
-        str = "{0}:{1},{2}".format(DIR_LINE, self._startpos, self._endpos)
+        str = f"{DIR_LINE}:{self._startpos},{self._endpos}"
         return str
 
 
@@ -563,7 +605,7 @@ class MagLine(Line):
 
     def __init__(self, startpos, endpos, cell_callback=None, type=Line.MLINE):
         self.cell = cell_callback
-        super(MagLine, self).__init__(startpos=startpos, endpos=endpos, type=type)
+        super().__init__(startpos=startpos, endpos=endpos, type=type)
         self._representation()
 
     def _line_match(self, idx, ori, pos):
@@ -707,7 +749,7 @@ class MagLine(Line):
         return MagLine(startpos, endpos, self.cell, self.type)
 
     def memo(self):
-        str = "{0}:{1},{2},{3}".format(MAG_LINE, self._type, self._startpos, self._endpos)
+        str = f"{MAG_LINE}:{self._type},{self._startpos},{self._endpos}"
         return str
 
 
@@ -715,13 +757,13 @@ class MagLineOld(MagLine):
     """Alte MagLine, wegen abwaertscompatibilitaet noch vorhanden."""
 
     def __init__(self, startpos, endpos, cell_callback=None, type=Line.MLINE_LEGACY):
-        super(MagLineOld, self).__init__(startpos=startpos, endpos=endpos, cell_callback=cell_callback, type=type)
+        super().__init__(startpos=startpos, endpos=endpos, cell_callback=cell_callback, type=type)
         self._representation()
         self._se_count = 0
         self._se_status_msg = ""
 
     def paste(self, grid):
-        super(MagLineOld, self).paste(grid)
+        super().paste(grid)
         if self._se_count > 0:
             msg = self._status_msg
             pub.sendMessage('STATUS_MESSAGE', msg=msg)
@@ -738,14 +780,14 @@ class MagLineOld(MagLine):
     def start_character(self, se_count, se_status):
 
         def set_rechts_links():
-            nonlocal start_ori  # noqa E999
-            nonlocal start_char  # noqa E999
+            nonlocal start_ori
+            nonlocal start_char
             start_ori = HORIZONTAL
             start_char = line_hor
 
         def set_oben_unten():
-            nonlocal start_ori  # noqa E999
-            nonlocal start_char  # noqa E999
+            nonlocal start_ori
+            nonlocal start_char
             start_ori = VERTICAL
             start_char = line_vert
 
@@ -1093,7 +1135,7 @@ class Rect(Symbol):
             endpos = startpos
             startpos = tmp
         grid = {"N": ['?']}
-        super(Rect, self).__init__(grid=grid, startpos=startpos, endpos=endpos)
+        super().__init__(grid=grid, startpos=startpos, endpos=endpos)
         self._is_symbol = False
         self._is_line = True
         self._representation()
@@ -1127,7 +1169,7 @@ class Rect(Symbol):
         return Rect(startpos, endpos)
 
     def memo(self):
-        str = "{0}:{1},{2}".format(DRAW_RECT, self._startpos, self._endpos)
+        str = f"{DRAW_RECT}:{self._startpos},{self._endpos}"
         return str
 
 
@@ -1135,7 +1177,7 @@ class Arrow(Symbol):
 
     def __init__(self, startpos, endpos):
         grid = {"N": ['?']}
-        super(Arrow, self).__init__(grid=grid, startpos=startpos, endpos=endpos)
+        super().__init__(grid=grid, startpos=startpos, endpos=endpos)
         self._is_symbol = False
         self._is_line = True
         self._representation()
@@ -1253,14 +1295,14 @@ class Arrow(Symbol):
         return Arrow(startpos, endpos)
 
     def memo(self):
-        str = "{0}:{1},{2}".format(ARROW, self._startpos, self._endpos)
+        str = f"{ARROW}:{self._startpos},{self._endpos}"
         return str
 
 
 class Column(Symbol):
 
     def __init__(self, col, action):
-        super(Column, self).__init__(id=col, startpos=Pos(col, 0))
+        super().__init__(identity=col, startpos=Pos(col, 0))
         self._col = col
         self._action = action
         self._is_symbol = False
@@ -1288,7 +1330,7 @@ class Column(Symbol):
             str = "i"
         else:
             str = "d"
-        str += "{0}:{1}".format(COL, self.col)
+        str += f"{COL}:{self.col}"
         return str
 
     def copy(self):
@@ -1298,7 +1340,7 @@ class Column(Symbol):
 class Row(Symbol):
 
     def __init__(self, row, action):
-        super(Row, self).__init__(id=row, startpos=Pos(0, row))
+        super().__init__(identity=row, startpos=Pos(0, row))
         self._row = row
         self._action = action
         self._is_symbol = False
@@ -1326,7 +1368,7 @@ class Row(Symbol):
             str = "i"
         else:
             str = "d"
-        str += "{0}:{1}".format(ROW, self.row)
+        str += f"{ROW}:{self.row}"
         return str
 
     def copy(self):

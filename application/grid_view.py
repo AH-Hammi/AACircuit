@@ -3,34 +3,55 @@ AACircuit
 2020-03-02 JvO
 """
 
-import cairo
 import time
+
+import cairo
 from pubsub import pub
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QImage, QPainter
+from PySide6.QtWidgets import QWidget
 
-from gettext import gettext as _
-from application import HORIZONTAL, VERTICAL
-from application import IDLE, SELECTING, SELECTED
-from application import CHARACTER, COMPONENT, LINE, MAG_LINE, DIR_LINE, OBJECT, OBJECTS, COL, ROW, RECT, DRAW_RECT, ERASER, ARROW
-from application import MARK_CHAR
-from application import TEXT, TEXT_BLOCK
+from application import (
+    ARROW,
+    CHARACTER,
+    COL,
+    COMPONENT,
+    DIR_LINE,
+    DRAW_RECT,
+    ERASER,
+    HORIZONTAL,
+    IDLE,
+    LINE,
+    MAG_LINE,
+    MARK_CHAR,
+    OBJECT,
+    OBJECTS,
+    RECT,
+    ROW,
+    SELECTED,
+    SELECTING,
+    TEXT,
+    TEXT_BLOCK,
+    VERTICAL,
+)
 from application.pos import Pos
-from application.symbol import Text, Line, MagLine, DirLine, Rect, Arrow
 from application.preferences import Preferences
-from application.selection import Selection, SelectionCol, SelectionRow, SelectionRect, SelectionArrow, SelectionObject, SelectionEraser
+from application.selection import (
+    Selection,
+    SelectionArrow,
+    SelectionCol,
+    SelectionEraser,
+    SelectionObject,
+    SelectionRect,
+    SelectionRow,
+)
+from application.symbol import Arrow, DirLine, Line, MagLine, Rect, Text
 
-import gi
 
-gi.require_version('Gtk', '3.0')
-from gi.repository import Gtk, Gdk, GLib  # noqa: E402
-
-gi.require_version('PangoCairo', '1.0')
-from gi.repository import Pango, PangoCairo  # noqa: E402
-
-
-class GridView(Gtk.DrawingArea):
+class GridView(QWidget):
 
     def __init__(self):
-        super(GridView, self).__init__()
+        super().__init__()
 
         self.surface = None
         self._grid = None
@@ -56,31 +77,15 @@ class GridView(Gtk.DrawingArea):
         self._show_line_pickpoints = True
         self._show_text_pickpoints = True
 
-        self.set_can_focus(True)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setMouseTracking(True)
+        self._mouse_dragging = False
 
-        self.connect('draw', self.on_draw)
-        self.connect('configure-event', self.on_configure)
-
-        self.add_events(Gdk.EventMask.BUTTON_PRESS_MASK)
-        self.connect('button-press-event', self.on_button_press)
-
-        # https://stackoverflow.com/questions/44098084/how-do-i-handle-keyboard-events-in-gtk3
-        self.add_events(Gdk.EventMask.KEY_PRESS_MASK)
-        self.connect('key-press-event', self.on_key_press)
-
-        if Preferences.values['SELECTION_DRAG']:
-            self._gesture_drag = Gtk.GestureDrag.new(self)
-            self._gesture_drag.connect('drag-begin', self.on_drag_begin)
-            self._gesture_drag.connect('drag-end', self.on_drag_end)
-            self._gesture_drag.connect('drag-update', self.on_drag_update)
-
-        self.add_events(Gdk.EventMask.POINTER_MOTION_MASK)
-        self.connect('motion-notify-event', self.on_hover)
-
-        # https://developer.gnome.org/gtk3/stable/GtkWidget.html#gtk-widget-add-tick-callback
         self.start_time = time.time()
-        self.cursor_callback = self.add_tick_callback(self.toggle_cursor)
-        # self.remove_tick_callback(self.cursor_callback)
+        self.cursor_timer = QTimer(self)
+        self.cursor_timer.setInterval(250)
+        self.cursor_timer.timeout.connect(self.toggle_cursor)
+        self.cursor_timer.start()
 
         # subscriptions
 
@@ -110,11 +115,6 @@ class GridView(Gtk.DrawingArea):
         pub.subscribe(self.on_draw_rect, 'DRAW_RECT')
         pub.subscribe(self.on_draw_arrow, 'DRAW_ARROW')
 
-        # printing
-        pub.subscribe(self.on_begin_print, 'BEGIN_PRINT')
-        pub.subscribe(self.on_draw_page, 'DRAW_PAGE')
-        pub.subscribe(self.on_draw_pdf, 'DRAW_PDF')
-
         # pickpoints
         pub.subscribe(self.on_show_symbol_pickpoints, 'SHOW_SYMBOL_PICKPOINTS')
         pub.subscribe(self.on_show_line_pickpoints, 'SHOW_LINE_PICKPOINTS')
@@ -125,10 +125,11 @@ class GridView(Gtk.DrawingArea):
         self.set_viewport_size()
 
     def set_viewport_size(self):
-        # https://stackoverflow.com/questions/11546395/how-to-put-gtk-drawingarea-into-gtk-layout
         width = self._grid.nr_cols * Preferences.values['GRIDSIZE_W']
         height = self._grid.nr_rows * Preferences.values['GRIDSIZE_H']
-        self.set_size_request(width, height)
+        self.setMinimumSize(width, height)
+        self.resize(width, height)
+        self.update()
 
     @property
     def max_pos(self):
@@ -155,29 +156,36 @@ class GridView(Gtk.DrawingArea):
         br = br.grid_cr()
         return ul, br
 
-    def init_surface(self, area):
+    def init_surface(self, width, height):
         """Initialize Cairo surface."""
+        width = max(1, int(width))
+        height = max(1, int(height))
         if self.surface is not None:
             # destroy previous buffer
             self.surface.finish()
             self.surface = None
         # create a new buffer
-        self.surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, area.get_allocated_width(), area.get_allocated_height())
+        self.surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, width, height)
 
-    def on_configure(self, area, event, data=None):
-        self.init_surface(self)
+    def paintEvent(self, event):
+        width = max(self.width(), self._grid.nr_cols * Preferences.values['GRIDSIZE_W'] if self._grid else 1)
+        height = max(self.height(), self._grid.nr_rows * Preferences.values['GRIDSIZE_H'] if self._grid else 1)
+        if self.surface is None or self.surface.get_width() != width or self.surface.get_height() != height:
+            self.init_surface(width, height)
         context = cairo.Context(self.surface)
         self.do_drawing(context)
         self.surface.flush()
-        return False
-
-    def on_draw(self, area, ctx):
-        if self.surface is not None:
-            ctx.set_source_surface(self.surface, 0.0, 0.0)
-            ctx.paint()
-        else:
-            print(_("Invalid surface"))
-        return False
+        data = self.surface.get_data()
+        image = QImage(
+            data,
+            self.surface.get_width(),
+            self.surface.get_height(),
+            self.surface.get_stride(),
+            QImage.Format.Format_ARGB32_Premultiplied,
+        ).copy()
+        painter = QPainter(self)
+        painter.drawImage(0, 0, image)
+        painter.end()
 
     # (don't) show pickpoints
 
@@ -190,48 +198,17 @@ class GridView(Gtk.DrawingArea):
     def on_show_text_pickpoints(self, state):
         self._show_text_pickpoints = state
 
-    # printing
-
-    def on_begin_print(self, parms):
-        operation, print_ctx = parms
-        operation.set_n_pages(1)
-
-    def on_draw_page(self, parms):
-        operation, print_ctx, page_num = parms
-        # w = print_ctx.get_width()
-        # h = print_ctx.get_height()
-        # print("width: {} height:{})".format(w, h))
-        ctx = print_ctx.get_cairo_context()
-        # self.draw_border(ctx, w, h)
-        ctx.scale(0.5, 0.5)
-        self.draw_content(ctx)
-
-    def on_draw_pdf(self, filename):
-        # don't use the drawing_area, so that this method can be run from (nose) test method (w/o GUI)
-        # w = self.get_allocated_width()
-        # h = self.get_allocated_height()
-        # FIXME Set Portrait or Landscape dimensions based upon prefs or printer settings
-        w, h = (560, 784)
-        surface = cairo.PDFSurface(filename, w, h)
-        ctx = cairo.Context(surface)
-        # self.draw_border(ctx, w, h)
-        ctx.scale(0.5, 0.5)
-        self.draw_content(ctx)
-        surface.finish()
-        msg = _("PDF Exported to {}").format(filename)
-        pub.sendMessage('STATUS_MESSAGE', msg=msg)
-
     # SELECTIONs
 
     def on_nothing_selected(self):
         self._selection = Selection(None)
-        self.queue_resize()
+        self.update()
 
     def on_add_text(self):
         self._selection = Selection(item=TEXT, state=SELECTING)
         self._text = ""
         self._symbol = Text(Pos(0, 0), self._text)
-        self.grab_focus()
+        self.setFocus()
 
     def on_add_textblock(self, text):
         self._selection = Selection(item=TEXT_BLOCK, state=SELECTING)
@@ -305,57 +282,11 @@ class GridView(Gtk.DrawingArea):
 
     # TEXT ENTRY
 
-    def on_key_press(self, widget, event):
-
-        # TODO Will this work in other locale too?
-        def filter_non_printable(ascii):
-            char = ''
-            if (ascii > 31 and ascii < 255) or ascii == 9:
-                char = chr(ascii)
-            return char
-
-        # modifier = event.state
-        # name = Gdk.keyval_name(event.keyval)
-        value = event.keyval
-
-        if value == Gdk.KEY_Escape:
-            # exit drawing
-            if self._selection.state == SELECTING and \
-                    self._selection.item in (DRAW_RECT, ARROW, LINE, MAG_LINE, DIR_LINE):
-                self._selection.state = IDLE
-                return True
-            # exit selection mode
-            elif self._selection.item == OBJECT:
-                self._selection.state = SELECTING
-                return True
-            elif self._selection.item in (RECT, ERASER):
-                self._selection.state = IDLE
-                return True
-
-        if value & 255 == ord('r') and \
-                self._selection.item in (CHARACTER, COMPONENT, OBJECTS, TEXT_BLOCK):
-            pub.sendMessage('ROTATE_SYMBOL')
-            return True
-        if value & 255 == ord('m') and \
-                self._selection.item in (COMPONENT, OBJECTS, TEXT_BLOCK):
-            pub.sendMessage('MIRROR_SYMBOL')
-            return True
-
-        # check the event modifiers (can also use CONTROL_MASK, etc)
-        # shift = (event.state & Gdk.ModifierType.SHIFT_MASK)
-        if value == Gdk.KEY_Left or value == Gdk.KEY_BackSpace:
-            if len(self._text) > 0:
-                self._text = self._text[:-1]
-        elif value & 255 == 13:  # enter
-            self._text += '\n'
-        else:
-            str = filter_non_printable(value)
-            self._text += str
-        return True
-
     # DRAWING
 
     def do_drawing(self, ctx):
+        if self._grid is None:
+            return
         self.draw_background(ctx)
         self.draw_gridlines(ctx)
         self.draw_content(ctx)
@@ -366,7 +297,7 @@ class GridView(Gtk.DrawingArea):
         ctx.save()
         ctx.set_source_rgb(0.75, 0.75, 0.75)
         ctx.set_line_width(0.25)
-        ctx.rectangle(w*0.01, h*0.01, w*0.99, h*0.99)  # noqa E226
+        ctx.rectangle(w * 0.01, h * 0.01, w * 0.99, h * 0.99)
         ctx.stroke()
         ctx.restore()
 
@@ -413,28 +344,16 @@ class GridView(Gtk.DrawingArea):
         if self._grid is None:
             return
         ctx.set_source_rgb(0.1, 0.1, 0.1)
-        use_pango_font = Preferences.values['PANGO_FONT']
-        if use_pango_font:
-            # https://sites.google.com/site/randomcodecollections/home/python-gtk-3-pango-cairo-example
-            # https://developer.gnome.org/pango/stable/pango-Cairo-Rendering.html
-            layout = PangoCairo.create_layout(ctx)
-            desc = Pango.font_description_from_string(Preferences.values['FONT'])
-            layout.set_font_description(desc)
-        else:
-            ctx.set_font_size(Preferences.values['FONTSIZE'])
-            ctx.select_font_face("monospace", cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
+        family = Preferences.values['FONT'] if Preferences.values['PANGO_FONT'] else 'monospace'
+        ctx.set_font_size(Preferences.values['FONTSIZE'])
+        ctx.select_font_face(family, cairo.FONT_SLANT_NORMAL, cairo.FONT_WEIGHT_NORMAL)
         y = 0
         for r in self._grid.grid:
             x = 0
             for c in r:
-                if use_pango_font:
-                    ctx.move_to(x, y)
-                    layout.set_text(str(c), -1)
-                    PangoCairo.show_layout(ctx, layout)
-                else:
-                    # the Cairo text glyph origin is its left-bottom corner
-                    ctx.move_to(x, y + Preferences.values['FONTSIZE'])
-                    ctx.show_text(str(c))
+                # Cairo's text glyph origin is its left-bottom corner.
+                ctx.move_to(x, y + Preferences.values['FONTSIZE'])
+                ctx.show_text(str(c))
                 x += Preferences.values['GRIDSIZE_W']
             y += Preferences.values['GRIDSIZE_H']
             # no reference to surface dimension, to allow to be run from (nose) test (w/o GUI)
@@ -510,17 +429,6 @@ class GridView(Gtk.DrawingArea):
         ctx.stroke()
         ctx.restore()
 
-    def toggle_cursor(self, widget, frame_clock, user_data=None):
-        now = time.time()
-        elapsed = now - self.start_time
-        if elapsed > 0.5:
-            self.start_time = now
-            self._cursor_on = not self._cursor_on
-            self.queue_resize()
-        elif elapsed > 0.25:
-            self.queue_resize()
-        return GLib.SOURCE_CONTINUE
-
     def mark_all_objects(self, ctx):
         """Mark all objects on the grid canvas."""
         ctx.save()
@@ -550,71 +458,6 @@ class GridView(Gtk.DrawingArea):
             pos = ref.symbol.startpos.view_xy() + offset
             ref.symbol.draw(ctx, pos)
         ctx.restore()
-
-    def on_button_press(self, widget, event):
-        pos = self.calc_position(event.x, event.y)
-        pub.sendMessage('POINTER_MOVED', pos=pos.grid_cr())
-        if not Preferences.values['SELECTION_DRAG'] \
-                and self._selection.item in (DRAW_RECT, ARROW, ERASER, RECT, LINE, MAG_LINE, DIR_LINE):
-            if self._selection.state == IDLE:
-                self.on_drag_begin(None, event.x, event.y)
-            elif self._selection.state == SELECTING:
-                offset = Pos(event.x, event.y) - self._drag_startpos
-                self.on_drag_end(None, offset.x, offset.y)
-
-        elif self._selection.state == SELECTING:
-            self.selecting_state(pos, event)
-
-        elif self._selection.state == SELECTED:
-            self.selected_state(event)
-        widget.queue_resize()
-
-    def selected_state(self, event):
-        pos = self._hover_pos
-        pos = pos.grid_cr()
-        if self._selection.item in (CHARACTER, COMPONENT, OBJECTS):
-            # https://stackoverflow.com/questions/6616270/right-click-menu-context-menu-using-pygtk
-            button = event.button
-            if button == 1:
-                # left button
-                pub.sendMessage('PASTE_OBJECTS', pos=pos)
-            elif button == 3:
-                # right button
-                pub.sendMessage('ROTATE_SYMBOL')
-
-    def selecting_state(self, pos, event):
-        if self._selection.item == ROW:
-            row = pos.grid_cr().y
-            pub.sendMessage('GRID_ROW', row=row, action=self._selection.action)
-
-        elif self._selection.item == COL:
-            col = pos.grid_cr().x
-            pub.sendMessage('GRID_COL', col=col, action=self._selection.action)
-
-        elif self._selection.item in (TEXT, TEXT_BLOCK):
-            button = event.button
-            if button == 1:
-                # left button
-                self._selection.state = SELECTED
-                self._symbol.startpos = pos.grid_cr()
-                pub.sendMessage('PASTE_TEXT', symbol=self._symbol)
-            elif button == 3:
-                # right button
-                self._symbol.rotate()
-                # FIXME more elegant options? otoh grid_view() is owner of the Text Symbol
-                pub.sendMessage('ORIENTATION_CHANGED', ori=self._symbol.ori_as_str)
-
-        elif self._selection.item == OBJECT:
-            self._selection.state = SELECTED
-            # select the object within the cursor rect
-            ul = pos
-            br = ul + Pos(Preferences.values['GRIDSIZE_W'], Preferences.values['GRIDSIZE_H'])
-            self._drag_startpos = ul
-            self._drag_endpos = br
-            self._selection.startpos = ul
-            self._selection.endpos = br
-            self._selection.maxpos = self.max_pos_grid
-            pub.sendMessage('SELECTION_CHANGED', selected=True)
 
     def calc_position(self, x, y):
         """Calculate the grid view position."""
@@ -727,31 +570,134 @@ class GridView(Gtk.DrawingArea):
             self._drag_prevpos.pop(0)
         return dir
 
+    def set_grid_size(self):
+        if self._grid is not None:
+            self.set_viewport_size()
+
+    def toggle_cursor(self):
+        if time.time() - self.start_time > 0.5:
+            self.start_time = time.time()
+            self._cursor_on = not self._cursor_on
+        self.update()
+
+    def keyPressEvent(self, event):
+        value = event.key()
+        text = event.text()
+        if value == Qt.Key.Key_Escape:
+            if self._selection.state == SELECTING and self._selection.item in (
+                DRAW_RECT, ARROW, LINE, MAG_LINE, DIR_LINE, RECT, ERASER,
+            ):
+                self._selection.state = IDLE
+            elif self._selection.item == OBJECT:
+                self._selection.state = SELECTING
+            self.update()
+            return
+        if text.lower() == 'r' and self._selection.item in (CHARACTER, COMPONENT, OBJECTS, TEXT_BLOCK):
+            pub.sendMessage('ROTATE_SYMBOL')
+            return
+        if text.lower() == 'm' and self._selection.item in (COMPONENT, OBJECTS, TEXT_BLOCK):
+            pub.sendMessage('MIRROR_SYMBOL')
+            return
+        if value in (Qt.Key.Key_Left, Qt.Key.Key_Backspace):
+            self._text = self._text[:-1]
+        elif value in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self._text += '\n'
+        elif text and text.isprintable():
+            self._text += text
+        self.update()
+        event.accept()
+
+    def mousePressEvent(self, event):
+        self.setFocus()
+        point = event.position()
+        x, y = point.x(), point.y()
+        pos = self.calc_position(x, y)
+        pub.sendMessage('POINTER_MOVED', pos=pos.grid_cr())
+
+        draw_items = (DRAW_RECT, ARROW, ERASER, RECT, LINE, MAG_LINE, DIR_LINE)
+        if not Preferences.values['SELECTION_DRAG'] and self._selection.item in draw_items:
+            if self._selection.state == IDLE:
+                self.on_drag_begin(None, x, y)
+            elif self._selection.state == SELECTING:
+                offset = Pos(x, y) - self._drag_startpos
+                self.on_drag_end(None, offset.x, offset.y)
+        elif self._selection.state == SELECTING:
+            self.selecting_state(pos, event)
+        elif self._selection.state == SELECTED:
+            self.selected_state(event)
+        elif Preferences.values['SELECTION_DRAG'] and event.button() == Qt.MouseButton.LeftButton:
+            self._mouse_dragging = True
+            self.on_drag_begin(None, x, y)
+        self.update()
+        event.accept()
+
+    def mouseMoveEvent(self, event):
+        point = event.position()
+        if self._mouse_dragging and self._drag_startpos is not None:
+            offset = Pos(point.x(), point.y()) - self._drag_startpos
+            self.on_drag_update(None, offset.x, offset.y)
+        self.on_hover(None, event)
+        self.update()
+
+    def mouseReleaseEvent(self, event):
+        if self._mouse_dragging and event.button() == Qt.MouseButton.LeftButton:
+            point = event.position()
+            offset = Pos(point.x(), point.y()) - self._drag_startpos
+            self.on_drag_update(None, offset.x, offset.y)
+            self.on_drag_end(None, offset.x, offset.y)
+            self._mouse_dragging = False
+        self.update()
+        event.accept()
+
     def on_hover(self, widget, event):
-        if not self.has_focus():
-            self.grab_focus()
+        if not self.hasFocus():
+            self.setFocus()
+        point = event.position()
         width = Preferences.values['GRIDSIZE_W']
         height = Preferences.values['GRIDSIZE_H']
-        self._hover_pos = self.calc_position(event.x, event.y)
+        self._hover_pos = self.calc_position(point.x(), point.y())
         delta = self._hover_previous_pos - self._hover_pos
-        if abs(delta.x) > width / 2 or abs(delta.y) > height / 2:
-            moved_enough = True
-            self._hover_previous_pos = self._hover_pos
-        else:
-            # reduce message flooding and superfluous drawing updates
-            moved_enough = False
-
+        moved_enough = abs(delta.x) > width / 2 or abs(delta.y) > height / 2
         if moved_enough:
+            self._hover_previous_pos = self._hover_pos
             pub.sendMessage('POINTER_MOVED', pos=self._hover_pos.grid_cr())
-
-        if self._selection.state == SELECTING and \
-                self._selection.item == OBJECT:
-            if moved_enough:
-                pub.sendMessage('SELECTOR_MOVED', pos=self._hover_pos.grid_cr())
-
-        if not Preferences.values['SELECTION_DRAG'] \
-                and self._selection.state == SELECTING \
-                and self._selection.item in (DRAW_RECT, ARROW, RECT, ERASER, LINE, MAG_LINE, DIR_LINE):
-            offset = Pos(event.x, event.y) - self._drag_startpos
+        if self._selection.state == SELECTING and self._selection.item == OBJECT and moved_enough:
+            pub.sendMessage('SELECTOR_MOVED', pos=self._hover_pos.grid_cr())
+        if not Preferences.values['SELECTION_DRAG'] and self._selection.state == SELECTING and \
+                self._selection.item in (DRAW_RECT, ARROW, RECT, ERASER, LINE, MAG_LINE, DIR_LINE):
+            offset = Pos(point.x(), point.y()) - self._drag_startpos
             if moved_enough:
                 self.on_drag_update(None, offset.x, offset.y)
+
+    def selected_state(self, event):
+        pos = self._hover_pos.grid_cr()
+        if self._selection.item in (CHARACTER, COMPONENT, OBJECTS):
+            if event.button() == Qt.MouseButton.LeftButton:
+                pub.sendMessage('PASTE_OBJECTS', pos=pos)
+            elif event.button() == Qt.MouseButton.RightButton:
+                pub.sendMessage('ROTATE_SYMBOL')
+
+    def selecting_state(self, pos, event):
+        button = event.button()
+        if self._selection.item == ROW:
+            pub.sendMessage('GRID_ROW', row=pos.grid_cr().y, action=self._selection.action)
+        elif self._selection.item == COL:
+            pub.sendMessage('GRID_COL', col=pos.grid_cr().x, action=self._selection.action)
+        elif self._selection.item in (TEXT, TEXT_BLOCK):
+            if button == Qt.MouseButton.LeftButton:
+                self._selection.state = SELECTED
+                self._symbol.startpos = pos.grid_cr()
+                pub.sendMessage('PASTE_TEXT', symbol=self._symbol)
+            elif button == Qt.MouseButton.RightButton:
+                self._symbol.rotate()
+                pub.sendMessage('ORIENTATION_CHANGED', ori=self._symbol.ori_as_str)
+        elif self._selection.item == OBJECT and button == Qt.MouseButton.LeftButton:
+            self._selection.state = SELECTED
+            ul = pos
+            br = ul + Pos(Preferences.values['GRIDSIZE_W'], Preferences.values['GRIDSIZE_H'])
+            self._drag_startpos = ul
+            self._drag_endpos = br
+            self._selection.startpos = ul
+            self._selection.endpos = br
+            self._selection.maxpos = self.max_pos_grid
+            pub.sendMessage('SELECTION_CHANGED', selected=True)

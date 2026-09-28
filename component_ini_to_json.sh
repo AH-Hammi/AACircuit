@@ -2,7 +2,7 @@
 
 # 2020-03-12 Convert AACircuit components library file from *.ini to *.json
 
-# Usage: ./component_ini_to_json.sh component1.ini > component_de.json
+# Usage: ./component_ini_to_json.sh component1.ini > application/components/user_component_1.json
 
 FILE="$1"
 DEBUG=${DEBUG:="0"}; # 1=show debug msg
@@ -144,7 +144,6 @@ BEGIN {
     quote = "\42"  # double-quote char
 
     component_busy = 0
-    component_nr = 1
     grid_busy = 0
     grid_item = 1
     grid_line_printed = 0
@@ -188,7 +187,6 @@ END {
             printf ",\n";
 
         printf "%s%s%s: {\n", quote, name, quote;
-        printf "  %sid%s: %s,\n", quote, quote, component_nr++;
 
         component_busy = 1
 

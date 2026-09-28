@@ -2,16 +2,16 @@
 
 import unittest
 
+from application.controller import Controller
 from application.pos import Pos
 from application.symbol import Line
-from application.controller import Controller
 
 
 class LinesTest(unittest.TestCase):
 
     def test_lines(self):
 
-        c = Controller()
+        c = Controller(component_language='en')
         c.on_new()
 
         start = Pos(5, 5)
@@ -29,7 +29,7 @@ class LinesTest(unittest.TestCase):
 
     def test_rect(self):
 
-        c = Controller()
+        c = Controller(component_language='en')
         c.on_new()
 
         start = Pos(5, 5)
@@ -42,7 +42,7 @@ class LinesTest(unittest.TestCase):
 
     def test_magic_line(self):
 
-        c = Controller()
+        c = Controller(component_language='en')
         c.on_new()
 
         # connect rectangle sides

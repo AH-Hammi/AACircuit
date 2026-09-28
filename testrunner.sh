@@ -7,7 +7,6 @@ find . -name "*.pyc" -exec rm '{}' ';'
 mkdir -p ./tmp
 find ./tmp -name "*.aac" -exec rm '{}' ';'
 find ./tmp -name "*.txt" -exec rm '{}' ';'
-find ./tmp -name "*.pdf" -exec rm '{}' ';'
 
 # Symbol dictionary keys are in English
 export LANG=EN

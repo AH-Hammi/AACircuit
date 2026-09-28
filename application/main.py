@@ -1,11 +1,14 @@
-from application.controller import Controller
+"""AACircuit application entry point."""
 
-import gi
-gi.require_version('Gtk', '3.0')
-from gi.repository import Gtk  # noqa: E402
+import sys
+
+from PySide6.QtWidgets import QApplication
+
+from application.controller import Controller
 
 
 def main():
-    app = Controller()
-    app.show_all()
-    Gtk.main()
+    app = QApplication.instance() or QApplication(sys.argv)
+    controller = Controller()
+    controller.show_all()
+    return app.exec()

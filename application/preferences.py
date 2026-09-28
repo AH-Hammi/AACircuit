@@ -1,304 +1,204 @@
-"""
-AACircuit
-2020-03-02 JvO
-"""
+"""User settings and the Qt preferences dialog."""
 
-import sys
-import locale
-import json
 import collections
-from pubsub import pub
-from application import gettext as _
-from application import get_path_to_data, get_path_to_prefs
+import json
 
-import gi
-gi.require_version('Gtk', '3.0')
-from gi.repository import Gtk  # noqa: E402
+from pubsub import pub
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QFont, QIntValidator
+from PySide6.QtWidgets import (
+    QCheckBox,
+    QDialog,
+    QDialogButtonBox,
+    QFontComboBox,
+    QFormLayout,
+    QLineEdit,
+    QTabWidget,
+    QVBoxLayout,
+    QWidget,
+)
+
+from application import get_path_to_prefs
+from application import gettext as _
 
 PreferenceSetting = collections.namedtuple('PreferenceSetting', ['type', 'entry'])
 
 
-class Preferences(object):
+class Preferences:
+    values = {
+        'DEFAULT_ROWS': 36,
+        'DEFAULT_COLS': 72,
+        'FONTSIZE': 12,
+        'GRIDSIZE_W': 10,
+        'GRIDSIZE_H': 16,
+        'PANGO_FONT': False,
+        'FONT': 'monospace',
+        'SELECTION_DRAG': False,
+        'LINE_HOR': '-',
+        'LINE_VERT': '|',
+        'CROSSING': ')',
+        'LOWER_CORNER': "'",
+        'UPPER_CORNER': '.',
+        'TERMINAL1': None,
+        'TERMINAL2': 'o',
+        'TERMINAL3': '+',
+        'TERMINAL4': "'",
+        'TERMINAL4_VERT': '.',
+    }
 
-    values = dict()
-
-    # default preference values
-
-    values['DEFAULT_ROWS'] = 36
-    values['DEFAULT_COLS'] = 72
-
-    values['FONTSIZE'] = 12
-    values['GRIDSIZE_W'] = 10
-    values['GRIDSIZE_H'] = 16
-
-    values['PANGO_FONT'] = False
-    values['FONT'] = 'monospace'
-
-    # draw selection by dragging (True) or click and second-click (False)
-    values['SELECTION_DRAG'] = False
-
-    values['LINE_HOR'] = '-'
-    values['LINE_VERT'] = '|'
-    values['CROSSING'] = ')'
-
-    values['LOWER_CORNER'] = "'"
-    values['UPPER_CORNER'] = '.'
-
-    values['TERMINAL1'] = None
-    values['TERMINAL2'] = 'o'
-    values['TERMINAL3'] = '+'
-    values['TERMINAL4'] = "'"
-    values['TERMINAL4_VERT'] = "."
-
-    def __init__(self, filename=get_path_to_prefs()):
-        self._filename = filename
+    def __init__(self, filename=None):
+        self._filename = filename or get_path_to_prefs()
         self.read_preferences()
         pub.subscribe(self.on_save_preferences, 'SAVE_PREFERENCES')
 
     def has_value(self, name):
-        """Verify whether we have a preference value with this name."""
-        try:
-            value = self.values[name]  # noqa F841
-            return True
-        except KeyError:
-            return False
+        return name in self.values
 
     def nr_values(self):
-        """Return the number of preference settings."""
         return len(self.values)
 
     def get_value(self, name):
-        """
-        Return value with the given preference name.
-        Deprecated method.
-        Use the class dictionary instead: value = Preferences.values['name']
-        """
         print("Deprecated method: ", self.get_value.__name__)
         try:
             return self.values[name]
         except KeyError:
             print("Unknown preference name", name)
-            raise KeyError
+            raise
 
     def set_pref(self, name, value):
-        """Set the value for preference with the given name."""
         self.values[name] = value
 
     def read_preferences(self):
         try:
-            file = open(self._filename, 'r')
-            str = file.read()
-            file.close()
-            Preferences.values = json.loads(str)
-            msg = _("Preferences have been read from: %s" % self._filename)
-            # pub.sendMessage('STATUS_MESSAGE', msg=msg)
-            print(msg)
-        except IOError:
-            msg = _("Preferences file not found: %s, default preferences are being used" % self._filename)
-            # pub.sendMessage('STATUS_MESSAGE', msg=msg)
-            print(msg)
+            with open(self._filename, 'r', encoding='utf-8') as settings_file:
+                saved_values = json.load(settings_file)
+            self.values.update(saved_values)
+            print(_("Preferences have been read from: %s" % self._filename))
+        except (OSError, ValueError):
+            print(_("Preferences file not found: %s, default preferences are being used" % self._filename))
 
     def on_save_preferences(self):
         try:
-            fout = open(self._filename, 'w')
-            str = json.dumps(Preferences.values)
-            fout.write(str)
-            fout.close()
-            msg = _("Preferences have been saved in: %s" % self._filename)
-            pub.sendMessage('STATUS_MESSAGE', msg=msg)
-        except IOError:
-            msg = _("Unable to open file for writing: %s" % self._filename)
-            pub.sendMessage('STATUS_MESSAGE', msg=msg)
+            with open(self._filename, 'w', encoding='utf-8') as settings_file:
+                json.dump(self.values, settings_file)
+            pub.sendMessage('STATUS_MESSAGE', msg=_("Preferences have been saved in: %s" % self._filename))
+        except OSError:
+            pub.sendMessage('STATUS_MESSAGE', msg=_("Unable to open file for writing: %s" % self._filename))
 
 
-class NumberEntry(Gtk.Entry):
-
-    def __init__(self):
-        Gtk.Entry.__init__(self)
-        self.set_alignment(0.5)  # center
-        self.connect('changed', self.on_changed)
-
-    def on_changed(self, *args):
-        text = self.get_text().strip()
-        self.set_text(''.join([i for i in text if i in '0123456789']))
+class NumberEntry(QLineEdit):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setValidator(QIntValidator(1, 9999, self))
 
 
-class SingleCharEntry(Gtk.Entry):
+class SingleCharEntry(QLineEdit):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.textChanged.connect(self._limit_text)
 
-    def __init__(self):
-        Gtk.Entry.__init__(self)
-        # self.set_width_chars(2)
-        self.set_alignment(0.5)  # center
-        self.connect('changed', self.on_changed)
-
-    def set_text(self, str):
-        if str is None:
-            str = 'None'
-        super(SingleCharEntry, self).set_text(str)
-
-    def on_changed(self, *args):
-        text = self.get_text().strip()
-        if text != 'None' and len(text) > 1:
-            self.set_text(text[1])
+    def _limit_text(self, text):
+        if len(text) > 1:
+            self.setText(text[:1])
 
 
-class PreferencesDialog(Gtk.Dialog):
-    __gtype_name__ = 'PreferencesDialog'
+class PreferencesDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(_("Preferences"))
+        self.setMinimumWidth(380)
+        self.entries = {}
 
-    def __new__(cls):
-        """
-        This method creates and binds the builder window to the class.
-        In order for this to work correctly, the class of the main
-        window in the Glade UI file must be the same as the name of
-        this class.
+        layout = QVBoxLayout(self)
+        tabs = QTabWidget(self)
+        layout.addWidget(tabs)
 
-        https://eeperry.wordpress.com/2013/01/05/pygtk-new-style-python-class-using-builder/
-        """
-        try:
-            # https://askubuntu.com/questions/140552/how-to-make-glade-load-translations-from-opt
-            # For this particular case the locale module needs to be used instead of gettext.
-            # Python's gettext module is pure python, it doesn't actually set the text domain
-            # in a way that the C library can read, but locale does (by calling libc).
-            locale.bindtextdomain('aacircuit', get_path_to_data('locale/'))
-            locale.textdomain('aacircuit')
-            builder = Gtk.Builder()
-            # https://stackoverflow.com/questions/24320502/how-to-translate-pygtk-glade-gtk-builder-application
-            builder.set_translation_domain('aacircuit')
-            builder.add_from_file(get_path_to_data('preferences_dialog.glade'))
-        except IOError:
-            print(_("Failed to load XML GUI file preferences_dialog.glade"))
-            sys.exit(1)
-        new_object = builder.get_object('preferences')
-        new_object.finish_initializing(builder)
-        return new_object
+        grid_page = QWidget(self)
+        grid_form = QFormLayout(grid_page)
+        self._add_dimension(grid_form, _("Number of rows"), 'DEFAULT_ROWS')
+        self._add_dimension(grid_form, _("Number of columns"), 'DEFAULT_COLS')
+        self._add_dimension(grid_form, _("Cell width"), 'GRIDSIZE_W')
+        self._add_dimension(grid_form, _("Cell height"), 'GRIDSIZE_H')
+        self._add_dimension(grid_form, _("Font size"), 'FONTSIZE')
+        self._add_boolean(grid_form, _("Use selected font"), 'PANGO_FONT')
+        font = QFontComboBox(self)
+        selected_font = QFont()
+        if not selected_font.fromString(str(self._value('FONT'))):
+            selected_font.setFamily(str(self._value('FONT')))
+        font.setCurrentFont(selected_font)
+        self.entries['FONT'] = PreferenceSetting('font', font)
+        grid_form.addRow(_("Font"), font)
+        self._add_boolean(grid_form, _("Drag selection"), 'SELECTION_DRAG')
+        tabs.addTab(grid_page, _("Grid"))
 
-    def finish_initializing(self, builder):
-        """
-        Treat this as the __init__() method.
-        Arguments pass in must be passed from __new__().
-        """
-        builder.connect_signals(self)
-        self.set_default_size(350, 600)
+        lines_page = QWidget(self)
+        lines_form = QFormLayout(lines_page)
+        for label, key in (
+            (_("Horizontal line"), 'LINE_HOR'),
+            (_("Vertical line"), 'LINE_VERT'),
+            (_("Terminal 1"), 'TERMINAL1'),
+            (_("Terminal 2"), 'TERMINAL2'),
+            (_("Terminal 3"), 'TERMINAL3'),
+            (_("Terminal 4"), 'TERMINAL4'),
+            (_("Terminal 4 vertical start"), 'TERMINAL4_VERT'),
+        ):
+            self._add_character(lines_form, label, key)
+        tabs.addTab(lines_page, _("Lines"))
 
-        # Add any other initialization here
+        magic_page = QWidget(self)
+        magic_form = QFormLayout(magic_page)
+        for label, key in (
+            (_("Crossing character"), 'CROSSING'),
+            (_("Upper corner character"), 'UPPER_CORNER'),
+            (_("Lower corner character"), 'LOWER_CORNER'),
+        ):
+            self._add_character(magic_form, label, key)
+        tabs.addTab(magic_page, _("Magic line"))
 
-        self.entries = dict()
-        frame = builder.get_object('grid')
-        self.init_grid_prefs(frame)
-        frame = builder.get_object('lines')
-        self.init_lines_prefs(frame)
-        frame = builder.get_object('magic_line')
-        self.init_magic_line_prefs(frame)
-        self.show_all()
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            parent=self,
+        )
+        buttons.accepted.connect(self._save)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
 
-    def entry_string(self, container, row, label_txt, name):
-        label = Gtk.Label(label_txt)
-        label.set_alignment(0, 0)
-        container.attach(label, 0, row, 1, 1)
+    @staticmethod
+    def _value(key):
+        return Preferences.values[key]
 
-        entry = SingleCharEntry()
-        value = str(Preferences.values[name])
-        entry.set_text(value)
-        container.attach(entry, 1, row, 1, 1)
-        self.entries[name] = PreferenceSetting('str', entry)
+    def _add_dimension(self, form, label, key):
+        entry = NumberEntry(self)
+        entry.setText(str(self._value(key)))
+        self.entries[key] = PreferenceSetting('dim', entry)
+        form.addRow(label, entry)
 
-    def entry_dimension(self, container, row, label_txt, name):
-        label = Gtk.Label(label_txt)
-        label.set_alignment(0, 0)
-        container.attach(label, 0, row, 1, 1)
+    def _add_character(self, form, label, key):
+        entry = SingleCharEntry(self)
+        value = self._value(key)
+        entry.setText('' if value is None else str(value))
+        self.entries[key] = PreferenceSetting('str', entry)
+        form.addRow(label, entry)
 
-        entry = NumberEntry()
-        value = str(Preferences.values[name])
-        entry.set_text(value)
-        container.attach(entry, 1, row, 1, 1)
-        self.entries[name] = PreferenceSetting('dim', entry)
+    def _add_boolean(self, form, label, key):
+        entry = QCheckBox(self)
+        entry.setChecked(bool(self._value(key)))
+        self.entries[key] = PreferenceSetting('bool', entry)
+        form.addRow(label, entry)
 
-    def entry_font(self, container, row, label_txt, name):
-        label = Gtk.Label(label_txt)
-        label.set_alignment(0, 0)
-        container.attach(label, 0, row, 1, 1)
-
-        entry = Gtk.FontButton()
-        value = str(Preferences.values[name])
-        entry.set_font_name(value)
-        container.attach(entry, 1, row, 1, 1)
-        self.entries[name] = PreferenceSetting('font', entry)
-
-    def entry_bool(self, container, row, label_txt, name):
-        label = Gtk.Label(label_txt)
-        label.set_alignment(0, 0)
-        container.attach(label, 0, row, 1, 1)
-
-        entry = Gtk.CheckButton()
-        value = Preferences.values[name]
-        entry.set_active(value)
-        container.attach(entry, 1, row, 1, 1)
-        self.entries[name] = PreferenceSetting('bool', entry)
-
-    def init_grid_prefs(self, frame):
-        grid = Gtk.Grid()
-        grid.set_row_spacing(5)
-        grid.set_column_spacing(5)
-        frame.add(grid)
-        row = 0
-        self.entry_dimension(grid, row, _("Number of rows"), 'DEFAULT_ROWS')
-        row += 1
-        self.entry_dimension(grid, row, _("Number of columns"), 'DEFAULT_COLS')
-        row += 1
-        self.entry_dimension(grid, row, _("cell width"), 'GRIDSIZE_W')
-        row += 1
-        self.entry_dimension(grid, row, _("cell height"), 'GRIDSIZE_H')
-        row += 1
-        self.entry_dimension(grid, row, _("Font size"), 'FONTSIZE')
-        row += 1
-        self.entry_bool(grid, row, _("Use Pango font"), 'PANGO_FONT')
-        row += 1
-        self.entry_font(grid, row, _("Font"), 'FONT')
-        row += 1
-        # in effect after closing/opening application
-        self.entry_bool(grid, row, _("Drag selection"), 'SELECTION_DRAG')
-
-    def init_lines_prefs(self, frame):
-        grid = Gtk.Grid()
-        grid.set_row_spacing(5)
-        grid.set_column_spacing(5)
-        frame.add(grid)
-        row = 0
-        self.entry_string(grid, row, _("Horizontal line"), 'LINE_HOR')
-        row += 1
-        self.entry_string(grid, row, _("Vertical line"), 'LINE_VERT')
-        row += 1
-        self.entry_string(grid, row, _("Terminal1"), 'TERMINAL1')
-        row += 1
-        self.entry_string(grid, row, _("Terminal2"), 'TERMINAL2')
-        row += 1
-        self.entry_string(grid, row, _("Terminal3"), 'TERMINAL3')
-        row += 1
-        self.entry_string(grid, row, _("Terminal4"), 'TERMINAL4')
-        row += 1
-        self.entry_string(grid, row, _("Terminal4 Vertical start"), 'TERMINAL4_VERT')
-
-    def init_magic_line_prefs(self, frame):
-        grid = Gtk.Grid()
-        grid.set_row_spacing(5)
-        grid.set_column_spacing(5)
-        frame.add(grid)
-        row = 0
-        self.entry_string(grid, row, _("Crossing char"), 'CROSSING')
-        row += 1
-        self.entry_string(grid, row, _("Upper corner char"), 'UPPER_CORNER')
-        row += 1
-        self.entry_string(grid, row, _("Lower corner char"), 'LOWER_CORNER')
-
-    def on_ok_clicked(self, item):
+    def _save(self):
         for key, setting in self.entries.items():
+            entry = setting.entry
             if setting.type == 'str':
-                value = setting.entry.get_text()
+                value = entry.text()
             elif setting.type == 'dim':
-                value = int(setting.entry.get_text())
+                value = int(entry.text())
             elif setting.type == 'bool':
-                value = setting.entry.get_active()
-            elif setting.type == 'font':
-                value = setting.entry.get_font_name()
+                value = entry.isChecked()
+            else:
+                value = entry.currentFont().family()
             Preferences.values[key] = value
         pub.sendMessage('SAVE_PREFERENCES')
+        self.accept()

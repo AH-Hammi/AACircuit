@@ -1,49 +1,23 @@
-"""
-AACircuit
-2020-03-02 JvO
-"""
+"""Qt component list used by the main window."""
 
 from pubsub import pub
+from PySide6.QtWidgets import QListWidget
+
 from application import gettext as _
 
-import gi
-gi.require_version('Gtk', '3.0')
-from gi.repository import Gtk  # noqa: E402
 
-
-class ComponentView():
-
-    def __init__(self, builder):
-        scrolled_window = builder.get_object('component_window')
-        # scrolled_window.set_size_request(200, 100)
-        scrolled_window.set_border_width(2)
-        # scrolled_window.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-
-        self.listmodel = builder.get_object('liststore1')
-        view = builder.get_object('treeview1')
-        view.get_selection().connect('changed', self.on_changed)
-
-        self.columns = [_('Description')]
-        for i, column in enumerate(self.columns):
-            # cellrenderer to render the text
-            cell = Gtk.CellRendererText()
-            # the column is created
-            col = Gtk.TreeViewColumn(column, cell, text=i)
-            # and it is appended to the treeview
-            view.append_column(col)
-
+class ComponentView(QListWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMinimumWidth(190)
+        self.itemSelectionChanged.connect(self.on_changed)
         pub.subscribe(self.set_components, 'ALL_COMPONENTS')
 
     def set_components(self, list):
-        for label in list:
-            self.listmodel.append((label,))
+        self.clear()
+        self.addItems(list)
 
-    def on_changed(self, selection):
-        (model, iter) = selection.get_selected()
-        if iter is not None:
-            label = model[iter][0]
-        else:
-            # default component
-            label = _("Resistor")
+    def on_changed(self):
+        items = self.selectedItems()
+        label = items[0].text() if items else _("Resistor")
         pub.sendMessage('COMPONENT_CHANGED', label=label)
-        return True

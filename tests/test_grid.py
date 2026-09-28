@@ -12,8 +12,8 @@ class GridTest(unittest.TestCase):
 
         g = Grid()
 
-        self.assertEquals(g.nr_rows, 5)
-        self.assertEquals(g.nr_cols, 5)
+        self.assertEqual(g.nr_rows, 5)
+        self.assertEqual(g.nr_cols, 5)
 
     def test_content(self):
 
@@ -28,11 +28,11 @@ class GridTest(unittest.TestCase):
 
         rect = (Pos(1, 1), Pos(1, 1))
         value = g.rect(rect)[0][0]
-        self.assertEquals(value, 6)
+        self.assertEqual(value, 6)
 
         rect = (Pos(4, 4), Pos(4, 4))
         value = g.rect(rect)[0][0]
-        self.assertEquals(value, 24)
+        self.assertEqual(value, 24)
 
     def test_fill(self):
 

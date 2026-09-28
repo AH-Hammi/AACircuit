@@ -6,16 +6,16 @@ from application.preferences import Preferences
 class PreferencesTest(unittest.TestCase):
 
     def test_get(self):
-        self.assertEquals(Preferences.values['FONTSIZE'], 12)
+        self.assertEqual(Preferences.values['FONTSIZE'], 12)
 
     def test_set(self):
         Preferences.values['FONTSIZE'] = 14
-        self.assertEquals(Preferences.values['FONTSIZE'], 14)
+        self.assertEqual(Preferences.values['FONTSIZE'], 14)
 
     def test_nr_settings(self):
         # 2020-05-28 number of settings in the preferences testfile: 18
         p = Preferences()
-        self.assertEquals(p.nr_values(), 18)
+        self.assertEqual(p.nr_values(), 18)
 
     def test_has_value(self):
         p = Preferences()
@@ -26,10 +26,10 @@ class PreferencesTest(unittest.TestCase):
         p = Preferences(filename='tests/files/test_aacircuit.ini')
 
         # test integer
-        self.assertEquals(p.values['FONTSIZE'], 12)
+        self.assertEqual(p.values['FONTSIZE'], 12)
 
         # test boolean
-        self.assertEquals(p.values['SELECTION_DRAG'], False)
+        self.assertEqual(p.values['SELECTION_DRAG'], False)
 
         # test string
-        self.assertEquals(p.values['LINE_HOR'], '-')
+        self.assertEqual(p.values['LINE_HOR'], '-')

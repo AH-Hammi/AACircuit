@@ -4,10 +4,11 @@ AACircuit
 """
 
 from math import sqrt
+
 from application.preferences import Preferences
 
 
-class Pos(object):
+class Pos:
     """A position on the grid (canvas)."""
 
     def __init__(self, x, y):
@@ -41,7 +42,7 @@ class Pos(object):
 
     def __str__(self):
         """Return coordinates as string: e.g.: "10,12"."""
-        return "{0},{1}".format(self._x, self._y)
+        return f"{self._x},{self._y}"
 
     def __hash__(self):
         return hash((self._x, self._y))

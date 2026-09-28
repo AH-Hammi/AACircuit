@@ -1,0 +1,106 @@
+{
+  "Resistor": {
+    "name": "Weerstand"
+  },
+  "Pot": {
+    "name": "Potmeter"
+  },
+  "Transformer": {
+    "name": "Transformator"
+  },
+  "Capacitor": {
+    "name": "Condensator"
+  },
+  "Electrolytic cap": {
+    "name": "Electrolytische cond"
+  },
+  "Battery": {
+    "name": "Batterij"
+  },
+  "Inductor": {
+    "name": "Spoel"
+  },
+  "OR gate": {
+    "name": "OF poort"
+  },
+  "AND gate": {
+    "name": "EN poort"
+  },
+  "NOR gate": {
+    "name": "NOF poort"
+  },
+  "NAND gate": {
+    "name": "NEN poort"
+  },
+  "Inverter gate": {
+    "name": "Inverter"
+  },
+  "Crossed diagonals": {
+    "name": "Kruisende diagonalen"
+  },
+  "Bridge rectifier": {
+    "name": "Bruggelijkrichter"
+  },
+  "Crystal": {
+    "name": "Kristal"
+  },
+  "Fuse": {
+    "name": "Zekering"
+  },
+  "Relay": {
+    "name": "Relais"
+  },
+  "SPDT switch": {
+    "name": "Enkelpolige wisselschakelaar"
+  },
+  "SPST switch": {
+    "name": "Enkelpolige schakelaar"
+  },
+  "switch": {
+    "name": "Schakelaar"
+  },
+  "Voltage regulator 7-series": {
+    "name": "Spanningsregelaar 7-serie"
+  },
+  "Signal Source": {
+    "name": "Signaalbron"
+  },
+  "Speaker/Mic": {
+    "name": "Luidspreker/Mikrofoon"
+  },
+  "Ground/Vcc": {
+    "name": "Aarde/Vcc"
+  },
+  "Voltage": {
+    "name": "Spanningsbron",
+    "grid": {
+      "N": [
+        "   |      ",
+        "  /+\\     ",
+        " (   )    ",
+        "  \\-/     ",
+        "   |      ",
+        "          "
+      ],
+      "E": [
+        "   _      ",
+        "  / \\     ",
+        "-(- +)-   ",
+        "  \\_/     ",
+        "          ",
+        "          "
+      ],
+      "S": [
+        "   |      ",
+        "  /-\\     ",
+        " (   )    ",
+        "  \\+/     ",
+        "   |       ",
+        "          "
+      ]
+    }
+  },
+  "NTC-Resistor": {
+    "name": "NTC-Weerstand"
+  }
+}
